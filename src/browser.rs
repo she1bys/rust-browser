@@ -24,10 +24,12 @@ use wry::{
 };
 
 use crate::bookmarks::{Bookmark, Bookmarks};
+use crate::device;
 use crate::display;
 use crate::download_hook::DownloadHook;
 use crate::downloads::{Download, DownloadState, Downloads};
 use crate::history::{History, HistoryEntry};
+use crate::import;
 use crate::ipc::{
     Command as BrowserCommand, DownloadAction, DownloadId, Panel, ProcessFailure, RendererInfo, Shortcut, TabCommand,
     TabId, UiMsg, UpdateEvent, UserEvent, WindowAction,
@@ -36,7 +38,9 @@ use crate::memory;
 use crate::menu::{MenuEntry, MenuKind, PopupMenu};
 use crate::newtab::{self, NewTabState, NEW_TAB_URL};
 use crate::session::Session;
-use crate::settings::{self, NewTabPage, SearchEngine, Settings, SettingsPatch, Startup, Theme, ZOOM_LEVELS};
+use crate::settings::{
+    self, EfficiencyMode, NewTabPage, SearchEngine, Settings, SettingsPatch, Startup, Theme, ZOOM_LEVELS,
+};
 use crate::updater::{self, Release};
 use crate::webview_hooks::PopupGestures;
 use crate::{shortcut_hook, url_input, webview_hooks};
@@ -59,6 +63,14 @@ const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const UPDATE_RETRY_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 const UI_HTML: &str = include_str!("../ui/index.html");
+/// Reader mode, run inside the page (see `toggle_reader`).
+const READER_JS: &str = include_str!("../ui/reader.js");
+
+/// An ordinary web page (reader mode and the like make sense on it).
+fn is_web_page(url: &str) -> bool {
+    let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
+}
 
 struct Tab {
     id: TabId,
@@ -83,6 +95,11 @@ struct Tab {
     hidden_since: Cell<Option<Instant>>,
     /// Frozen by the memory saver (WebView2 TrySuspend); resumes when shown.
     frozen: Cell<bool>,
+    /// Ads and trackers blocked on the current page (counted by the blocker
+    /// in `webview_hooks::attach_ad_blocker`, reset when a new page starts).
+    ads_blocked: Rc<Cell<u32>>,
+    /// The blocker has reported a new count that isn't shown yet.
+    ads_notified: Rc<Cell<bool>>,
 }
 
 /// One tab in the memory manager.
@@ -149,6 +166,10 @@ struct TabView<'a> {
     muted: bool,
     /// Put to sleep (or never loaded): uses no memory until opened.
     sleeping: bool,
+    /// Ads and trackers blocked on this page.
+    ads_blocked: u32,
+    /// A web page (offers reader mode).
+    can_read: bool,
 }
 
 /// What the button on a notice does.
@@ -208,10 +229,22 @@ struct DownloadView<'a> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AboutView<'a> {
     version: &'static str,
     /// Version of the WebView2 (Chromium) engine that draws the pages.
     engine: &'a str,
+    /// Installed memory, in bytes, and whether this counts as a low-end PC
+    /// (efficiency mode "Auto" turns on).
+    memory: Option<u64>,
+    low_end: bool,
+}
+
+/// A browser bookmarks and history can be imported from.
+#[derive(Serialize)]
+struct ImportSourceView {
+    id: import::Source,
+    name: &'static str,
 }
 
 /// Static configuration sent once when the UI finishes loading.
@@ -221,6 +254,8 @@ struct InitView<'a> {
     engines: Vec<EngineView>,
     zoom_levels: &'static [u16],
     about: AboutView<'a>,
+    /// Browsers found on this PC to import from.
+    import_sources: Vec<ImportSourceView>,
 }
 
 #[derive(Serialize)]
@@ -276,6 +311,8 @@ struct StateView<'a> {
     /// Only filled while the History panel is open.
     history: &'a [HistoryEntry],
     update: UpdateView<'a>,
+    /// Efficiency mode is on (by choice, or "Auto" on a low-end PC).
+    efficiency: bool,
 }
 
 /// Where a newly opened tab goes in the tab strip.
@@ -317,6 +354,8 @@ pub struct Browser {
     closed_tabs: Vec<(String, bool)>,
     /// The "Block pop-ups" setting, shared with every tab's new-window handler.
     block_popups: Rc<Cell<bool>>,
+    /// The "Block ads and trackers" setting, shared with every tab's blocker.
+    block_ads: Rc<Cell<bool>>,
     notice_action: Option<NoticeAction>,
     /// The engine crashed and a restart is under way.
     restarting: bool,
@@ -372,6 +411,9 @@ pub struct Browser {
     next_update_check: Instant,
     /// Installed with the installer, so it can update itself.
     can_update_itself: bool,
+    /// Installed memory, and whether this is a low-end PC (see `device.rs`).
+    device_memory: Option<u64>,
+    low_end_device: bool,
 }
 
 impl Browser {
@@ -395,7 +437,14 @@ impl Browser {
         let downloads = downloads_path.as_deref().map(Downloads::load).unwrap_or_default();
         let bookmarks = bookmarks_path.as_deref().map(Bookmarks::load).unwrap_or_default();
         let history = history_path.as_deref().map(History::load).unwrap_or_default();
-        let newtab = Arc::new(RwLock::new(NewTabState::from_sources(&settings, &bookmarks, &history)));
+        let device_memory = device::total_memory();
+        let low_end_device = device::is_low_end(device_memory, device::processor_count());
+        let lite = match settings.efficiency_mode {
+            EfficiencyMode::On => true,
+            EfficiencyMode::Off => false,
+            EfficiencyMode::Auto => low_end_device,
+        };
+        let newtab = Arc::new(RwLock::new(NewTabState::from_sources(&settings, &bookmarks, &history, lite)));
 
         let mut web_context = WebContext::new(data_dir);
         window.set_theme(window_theme(settings.theme));
@@ -431,7 +480,6 @@ impl Browser {
         let menu = PopupMenu::new(
             target,
             &window,
-            &mut web_context,
             chrome.environment(),
             window_theme(settings.theme),
             webview_theme(settings.theme),
@@ -457,6 +505,7 @@ impl Browser {
             confirm_close: false,
             closed_tabs: Vec::new(),
             block_popups: Rc::new(Cell::new(settings.block_popups)),
+            block_ads: Rc::new(Cell::new(settings.block_ads)),
             notice_action: None,
             restarting: false,
             started_at: Instant::now(),
@@ -495,7 +544,18 @@ impl Browser {
             update_release: None,
             next_update_check: Instant::now() + FIRST_UPDATE_CHECK,
             can_update_itself: updater::can_update_itself(),
+            device_memory,
+            low_end_device,
         })
+    }
+
+    /// Efficiency mode is on: chosen in Settings, or "Auto" on a low-end PC.
+    fn efficiency_active(&self) -> bool {
+        match self.settings.efficiency_mode {
+            EfficiencyMode::On => true,
+            EfficiencyMode::Off => false,
+            EfficiencyMode::Auto => self.low_end_device,
+        }
     }
 
     /// Starts the clock for the memory saver: a `Tick` event every few seconds.
@@ -697,6 +757,10 @@ impl Browser {
                 if let Some(tab) = self.tab_mut(id) {
                     let is_ntp = norm_url == NEW_TAB_URL || (norm_url.is_empty() && tab.url == NEW_TAB_URL);
                     let loading = !finished && !is_ntp;
+                    // (The ad count is reset by the blocker itself when a new page starts.)
+                    if finished && tab.ads_blocked.get() > 0 {
+                        changed = true; // show the page's count
+                    }
                     if tab.loading != loading {
                         tab.loading = loading;
                         changed = true;
@@ -824,6 +888,20 @@ impl Browser {
                     self.sync();
                 }
             }
+            UserEvent::MenuReady => self.menu.on_ready(),
+            UserEvent::AdsBlocked(id) => {
+                if let Some(tab) = self.tab(id) {
+                    tab.ads_notified.set(false);
+                    if self.on_screen_tabs().contains(&id) {
+                        self.sync();
+                    }
+                }
+            }
+            UserEvent::ReaderResult { id, result } => {
+                if result == "none" && self.active == Some(id) {
+                    self.show_notice("Reader mode isn't available: this page doesn't look like an article", false);
+                }
+            }
             UserEvent::MenuLostFocus => {
                 if self.menu.is_visible() && !self.menu.owns_focus() {
                     self.hide_menu();
@@ -833,6 +911,7 @@ impl Browser {
                 self.manage_memory();
                 self.update_memory_button(false);
                 self.check_for_updates_if_due();
+                self.menu.release_if_idle();
                 #[cfg(debug_assertions)]
                 self.debug_memory_probe();
             }
@@ -854,6 +933,7 @@ impl Browser {
                 }
             }
             UserEvent::Update(event) => self.on_update_event(event),
+            UserEvent::Imported { source, result } => self.finish_import(source, result),
             UserEvent::ExternalOpen(arg) => {
                 self.window.set_minimized(false);
                 self.window.set_focus();
@@ -975,6 +1055,7 @@ impl Browser {
                 }
             }
             UiMsg::CheckForUpdates => self.check_for_updates(true),
+            UiMsg::ImportFrom { source } => self.import_from(source),
             UiMsg::InstallUpdate => self.install_update(),
             UiMsg::CloseTab { id } => self.close_tab(id),
             UiMsg::SelectTab { id, focus } => self.select_tab_with_focus(id, focus),
@@ -1106,6 +1187,7 @@ impl Browser {
             Shortcut::Bookmarks => self.toggle_panel_from_shortcut(Panel::Bookmarks),
             Shortcut::ToggleBookmarksBar => self.toggle_bookmarks_bar(),
             Shortcut::Fullscreen => self.run_command(BrowserCommand::Fullscreen),
+            Shortcut::Reader => self.run_command(BrowserCommand::ReaderMode),
             Shortcut::SavePage => self.run_command(BrowserCommand::SavePage),
             Shortcut::Menu => {
                 if self.is_fullscreen() {
@@ -1171,6 +1253,8 @@ impl Browser {
             C::ZoomOut => self.zoom_active(false),
             C::ResetZoom => self.reset_active_zoom(),
             C::Fullscreen => self.toggle_window_fullscreen(),
+            C::ReaderMode => self.toggle_reader(),
+            C::ImportData => self.import_from_other_browsers(),
             C::Exit => self.request_close(),
             // These act on the page, or filter when viewing Downloads / Bookmarks / History.
             C::Find if matches!(self.panel, Some(Panel::Bookmarks | Panel::History)) => {
@@ -1287,10 +1371,18 @@ impl Browser {
                     || matches!(self.panel, Some(Panel::Bookmarks | Panel::History))
                     || (self.panel.is_none() && self.active_is_downloads()),
             ),
+            MenuEntry::item(
+                C::ReaderMode,
+                "Reader mode",
+                "F9",
+                "reader",
+                has_view && self.active_tab().is_some_and(|t| is_web_page(&t.url)),
+            ),
             MenuEntry::item(C::Print, "Print…", "Ctrl+P", "print", has_page && has_view),
             MenuEntry::item(C::SavePage, "Save page as…", "Ctrl+S", "save", has_page && has_view),
             MenuEntry::item(C::DevTools, "Developer tools", "F12", "devtools", has_view),
             MenuEntry::Sep,
+            MenuEntry::item(C::ImportData, "Import from Chrome or Edge…", "", "import", true),
             MenuEntry::item(C::Settings, "Settings", "Ctrl+,", "settings", true),
             MenuEntry::danger(C::Exit, "Exit", "", "exit", true),
         ]);
@@ -1421,7 +1513,12 @@ impl Browser {
     /// scripts pause, nothing is lost) and, after longer, put to sleep (the
     /// page is unloaded and all its memory freed; it reloads when opened).
     fn manage_memory(&mut self) {
-        let Some((freeze_after, sleep_after)) = self.settings.memory_saver.timings() else { return };
+        let saver = match self.settings.memory_saver {
+            // Efficiency mode uses the strongest timings (unless the saver is off).
+            settings::MemorySaver::Balanced if self.efficiency_active() => settings::MemorySaver::Maximum,
+            saver => saver,
+        };
+        let Some((freeze_after, sleep_after)) = saver.timings() else { return };
         let now = Instant::now();
         // Never touched: what's on screen, what's playing sound, what's downloading.
         let mut keep_awake: HashSet<TabId> = self.download_tabs.values().copied().collect();
@@ -1807,6 +1904,86 @@ impl Browser {
         }
     }
 
+    // ---- reader mode ----------------------------------------------------
+
+    /// Opens (or closes) reader mode on the active page: its article as
+    /// clean, readable text (see `ui/reader.js`).
+    fn toggle_reader(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(tab) = self.tab(id) else { return };
+        if !is_web_page(&tab.url) {
+            return;
+        }
+        let Some(webview) = &tab.webview else { return };
+        let proxy = self.proxy.clone();
+        log_err(
+            webview.evaluate_script_with_callback(READER_JS, move |result| {
+                // The script's return value, as JSON ("\"opened\"").
+                let result = serde_json::from_str::<String>(&result).unwrap_or_default();
+                let _ = proxy.send_event(UserEvent::ReaderResult { id, result });
+            }),
+            "reader mode",
+        );
+    }
+
+    // ---- import ---------------------------------------------------------
+
+    /// The menu's "Import from Chrome or Edge…": opens Settings at Import.
+    fn import_from_other_browsers(&mut self) {
+        if self.panel != Some(Panel::Settings) {
+            self.set_panel(Some(Panel::Settings));
+        }
+        self.flush_sync();
+        log_err(
+            self.chrome.evaluate_script("window.browser && window.browser.showSettingsSection('import')"),
+            "show import settings",
+        );
+    }
+
+    /// Reads `source`'s bookmarks and history in the background.
+    fn import_from(&mut self, source: import::Source) {
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let result = import::import(source);
+            let _ = proxy.send_event(UserEvent::Imported { source, result });
+        });
+        self.show_notice(&format!("Importing from {}…", source.name()), false);
+    }
+
+    fn finish_import(&mut self, source: import::Source, result: Result<import::Imported, String>) {
+        let imported = match result {
+            Ok(imported) => imported,
+            Err(e) => {
+                self.show_notice(&format!("Import failed: {e}"), true);
+                return;
+            }
+        };
+        let bookmarks = self.bookmarks.import(imported.bookmarks);
+        let history = self.history.import(imported.history);
+        if bookmarks > 0 {
+            self.bookmarks_rev += 1;
+            self.save_bookmarks();
+        }
+        if history > 0 {
+            self.save_history();
+        }
+        if bookmarks + history > 0 {
+            self.sync_newtab_state();
+        }
+        let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
+        let text = if bookmarks + history == 0 {
+            format!("Nothing new to import from {}", source.name())
+        } else {
+            format!(
+                "Imported {} and {} from {}",
+                plural(bookmarks, "bookmark", "bookmarks"),
+                plural(history, "history entry", "history entries"),
+                source.name()
+            )
+        };
+        self.show_notice(&text, false);
+    }
+
     // ---- updates --------------------------------------------------------
 
     /// The daily automatic check (if it's switched on and due).
@@ -2032,7 +2209,7 @@ impl Browser {
         }
         if self.settings.theme != before.theme {
             self.window.set_theme(window_theme(self.settings.theme));
-            self.menu.set_theme(window_theme(self.settings.theme));
+            self.menu.set_theme(window_theme(self.settings.theme), webview_theme(self.settings.theme));
             // The theme belongs to a WebView2 profile. The UI and normal tabs
             // share one; private tabs have their own, so set it there too.
             let theme = webview_theme(self.settings.theme);
@@ -2044,6 +2221,7 @@ impl Browser {
             }
         }
         self.block_popups.set(self.settings.block_popups);
+        self.block_ads.set(self.settings.block_ads);
         let privacy = |s: &Settings| (s.save_passwords, s.autofill, s.tracking_prevention, s.safe_browsing);
         let privacy_changed = privacy(&self.settings) != privacy(before);
         if privacy_changed {
@@ -2068,7 +2246,9 @@ impl Browser {
         if self.settings.show_bookmarks_bar != before.show_bookmarks_bar {
             self.layout();
         }
-        if self.settings.search_engine != before.search_engine {
+        if self.settings.search_engine != before.search_engine
+            || self.settings.efficiency_mode != before.efficiency_mode
+        {
             self.sync_newtab_state();
         }
         self.sync();
@@ -2371,7 +2551,7 @@ impl Browser {
 
     /// Updates the shared New Tab snapshot and refreshes any open non-private New Tabs.
     fn sync_newtab_state(&self) {
-        let next = NewTabState::from_sources(&self.settings, &self.bookmarks, &self.history);
+        let next = NewTabState::from_sources(&self.settings, &self.bookmarks, &self.history, self.efficiency_active());
         let changed = {
             let mut guard = match self.newtab.write() {
                 Ok(g) => g,
@@ -2627,6 +2807,8 @@ impl Browser {
             muted: false,
             hidden_since: Cell::new(None),
             frozen: Cell::new(false),
+            ads_blocked: Rc::new(Cell::new(0)),
+            ads_notified: Rc::new(Cell::new(false)),
         };
         let index = match placement {
             Placement::End => self.tabs.len(),
@@ -2710,6 +2892,14 @@ impl Browser {
         }
         if let Err(e) = webview_hooks::attach(&webview, id, self.proxy.clone(), gestures) {
             eprintln!("attach webview hooks in tab {id}: {e}");
+        }
+        if let Some((counter, notified)) = self.tab(id).map(|t| (t.ads_blocked.clone(), t.ads_notified.clone())) {
+            let proxy = self.proxy.clone();
+            if let Err(e) =
+                webview_hooks::attach_ad_blocker(&webview, id, self.block_ads.clone(), counter, notified, proxy)
+            {
+                eprintln!("attach ad blocker in tab {id}: {e}");
+            }
         }
         self.apply_privacy(&webview);
         if zoom_percent != 100 {
@@ -3007,7 +3197,17 @@ impl Browser {
         let init = InitView {
             engines: SearchEngine::ALL.iter().map(|&e| EngineView { id: e, name: e.name() }).collect(),
             zoom_levels: &ZOOM_LEVELS,
-            about: AboutView { version: env!("CARGO_PKG_VERSION"), engine: &self.engine_version },
+            about: AboutView {
+                version: env!("CARGO_PKG_VERSION"),
+                engine: &self.engine_version,
+                memory: self.device_memory,
+                low_end: self.low_end_device,
+            },
+            import_sources: import::Source::ALL
+                .into_iter()
+                .filter(|s| s.is_available())
+                .map(|s| ImportSourceView { id: s, name: s.name() })
+                .collect(),
         };
         match serde_json::to_string(&init) {
             Ok(json) => {
@@ -3063,6 +3263,8 @@ impl Browser {
                     audible: t.audible,
                     muted: t.muted,
                     sleeping: t.webview.is_none() && !is_downloads_url(&t.url),
+                    ads_blocked: if self.settings.block_ads { t.ads_blocked.get() } else { 0 },
+                    can_read: t.webview.is_some() && is_web_page(&t.url),
                 })
                 .collect(),
             active: self.active,
@@ -3088,6 +3290,7 @@ impl Browser {
             bookmarks,
             history: if history_open { self.history.items() } else { &[] },
             update: self.update_view(),
+            efficiency: self.efficiency_active(),
         };
         match serde_json::to_string(&state) {
             Ok(json) => log_err(

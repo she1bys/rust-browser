@@ -115,6 +115,18 @@ impl MemorySaver {
     }
 }
 
+/// Efficiency mode: the strongest memory saver, no animations and lighter
+/// visual effects, for PCs with little memory or a slow processor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EfficiencyMode {
+    /// On for low-end PCs (see `device::is_low_end`), off otherwise.
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
 /// How strongly WebView2 blocks trackers (cookies and scripts that follow
 /// you across websites).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -174,6 +186,9 @@ pub struct Settings {
     /// Once a day, ask GitHub whether a newer version is out (and show an
     /// Update button if so). Nothing is installed without a click.
     pub check_for_updates: bool,
+    /// The built-in ad and tracker blocker (see `adblock.rs`).
+    pub block_ads: bool,
+    pub efficiency_mode: EfficiencyMode,
 }
 
 impl Default for Settings {
@@ -195,6 +210,8 @@ impl Default for Settings {
             autofill: true,
             safe_browsing: true,
             check_for_updates: true,
+            block_ads: true,
+            efficiency_mode: EfficiencyMode::Auto,
         }
     }
 }
@@ -220,6 +237,8 @@ pub struct SettingsPatch {
     pub autofill: Option<bool>,
     pub safe_browsing: Option<bool>,
     pub check_for_updates: Option<bool>,
+    pub block_ads: Option<bool>,
+    pub efficiency_mode: Option<EfficiencyMode>,
 }
 
 impl Settings {
@@ -304,6 +323,12 @@ impl Settings {
         if let Some(check) = patch.check_for_updates {
             self.check_for_updates = check;
         }
+        if let Some(block) = patch.block_ads {
+            self.block_ads = block;
+        }
+        if let Some(mode) = patch.efficiency_mode {
+            self.efficiency_mode = mode;
+        }
         *self != before
     }
 }
@@ -369,6 +394,17 @@ mod tests {
         let patch: SettingsPatch = serde_json::from_str(r#"{"checkForUpdates":false}"#).unwrap();
         assert!(off.apply(patch));
         assert!(!off.check_for_updates);
+        // The ad blocker is on by default and can be switched off.
+        assert!(s.block_ads);
+        let patch: SettingsPatch = serde_json::from_str(r#"{"blockAds":false}"#).unwrap();
+        assert!(off.apply(patch));
+        assert!(!off.block_ads);
+        // Efficiency mode follows the PC unless chosen.
+        assert_eq!(s.efficiency_mode, EfficiencyMode::Auto);
+        let patch: SettingsPatch = serde_json::from_str(r#"{"efficiencyMode":"on"}"#).unwrap();
+        assert!(off.apply(patch));
+        assert_eq!(off.efficiency_mode, EfficiencyMode::On);
+        assert!(serde_json::from_str::<SettingsPatch>(r#"{"efficiencyMode":"turbo"}"#).is_err());
         let mut s = s;
         assert!(s.apply(SettingsPatch { safe_browsing: Some(false), ..Default::default() }));
         assert!(!s.safe_browsing);
@@ -460,6 +496,8 @@ mod tests {
             autofill: false,
             safe_browsing: false,
             check_for_updates: false,
+            block_ads: false,
+            efficiency_mode: EfficiencyMode::On,
         };
         saved.save(&path).unwrap();
         assert_eq!(Settings::load(&path), saved);

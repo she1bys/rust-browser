@@ -41,7 +41,17 @@ fn pipe_name() -> String {
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         .collect();
-    format!(r"\\.\pipe\RustBrowser-SingleInstance-v2-{user}")
+    match crate::profile_override() {
+        // A separate profile (tests) is a separate instance.
+        Some(dir) => {
+            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+            for byte in dir.to_string_lossy().to_lowercase().bytes() {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+            }
+            format!(r"\\.\pipe\RustBrowser-SingleInstance-v2-{user}-{hash:016x}")
+        }
+        None => format!(r"\\.\pipe\RustBrowser-SingleInstance-v2-{user}"),
+    }
 }
 
 /// Attempts to forward `arg` to an existing instance, or becomes the primary

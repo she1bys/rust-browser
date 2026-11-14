@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ads test - Rust Browser test site</title>
+<!-- Requests to known ad and tracker domains. With the ad blocker on, the
+     browser answers them itself ("blocked"), so this page needs no internet. -->
+<script async src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+<script async src="https://cdn.taboola.com/libtrc/test/loader.js"></script>
+</head>
+<body>
+  <h1>Ads test page</h1>
+  <p>This page asks for three ad scripts and one tracking pixel. The address bar should show a shield with the number blocked.</p>
+  <img src="https://www.google-analytics.com/collect?v=1&amp;t=pageview" width="1" height="1" alt="">
+</body>
+</html>

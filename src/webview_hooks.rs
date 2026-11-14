@@ -1,6 +1,10 @@
 //! Native WebView2 hooks and actions for each tab beyond what `wry` exposes.
 
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    rc::Rc,
+};
 
 use tao::event_loop::EventLoopProxy;
 use webview2_com::{
@@ -11,21 +15,27 @@ use webview2_com::{
         ICoreWebView2, ICoreWebView2Environment13, ICoreWebView2Environment15, ICoreWebView2Environment8,
         ICoreWebView2FrameInfo, ICoreWebView2FrameInfo2, ICoreWebView2ProcessExtendedInfoCollection,
         ICoreWebView2Profile3, ICoreWebView2Settings4, ICoreWebView2Settings8, ICoreWebView2_12, ICoreWebView2_13,
-        ICoreWebView2_15, ICoreWebView2_16, ICoreWebView2_20, ICoreWebView2_25, ICoreWebView2_28, ICoreWebView2_3,
-        ICoreWebView2_8, COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER, COREWEBVIEW2_PROCESS_FAILED_KIND,
-        COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+        ICoreWebView2_15, ICoreWebView2_16, ICoreWebView2_2, ICoreWebView2_20, ICoreWebView2_22, ICoreWebView2_25,
+        ICoreWebView2_28, ICoreWebView2_3, ICoreWebView2_8, COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER,
+        COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
         COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
         COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE, COREWEBVIEW2_PROCESS_KIND,
         COREWEBVIEW2_PROCESS_KIND_RENDERER, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED,
         COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE,
-        COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
+        COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+        COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
     },
-    NewWindowRequestedEventHandler, ProcessFailedEventHandler, ShowSaveAsUICompletedHandler,
-    StatusBarTextChangedEventHandler, TrySuspendCompletedHandler, ZoomFactorChangedEventHandler,
+    NavigationStartingEventHandler, NewWindowRequestedEventHandler, ProcessFailedEventHandler,
+    ShowSaveAsUICompletedHandler, StatusBarTextChangedEventHandler, TrySuspendCompletedHandler,
+    WebResourceRequestedEventHandler, ZoomFactorChangedEventHandler,
 };
-use windows::core::{Interface, BOOL, HSTRING, PWSTR};
+use windows::{
+    core::{Interface, BOOL, HSTRING, PWSTR},
+    Win32::System::Com::IStream,
+};
 use wry::{WebView, WebViewExtWindows};
 
+use crate::adblock;
 use crate::ipc::{ProcessFailure, RendererInfo, TabId, UserEvent};
 use crate::settings::TrackingPrevention;
 
@@ -34,6 +44,85 @@ use crate::settings::TrackingPrevention;
 /// `Browser::ensure_tab_webview`), which runs for the same requests in the
 /// same order slightly later.
 pub type PopupGestures = Rc<RefCell<VecDeque<bool>>>;
+
+/// Blocks ad and tracker requests in this tab while `enabled` is set (the
+/// "Block ads and trackers" setting), counting them in `blocked`. WebView2
+/// only hands over requests that match a blocklist filter, so normal page
+/// loads don't pass through here at all (see `adblock.rs`).
+///
+/// Ads often load after the page itself has finished, so each change of the
+/// count is reported as `UserEvent::AdsBlocked`; `notified` keeps a burst of
+/// blocked requests down to one event until the browser has shown the count.
+pub fn attach_ad_blocker(
+    webview: &WebView,
+    tab: TabId,
+    enabled: Rc<Cell<bool>>,
+    blocked: Rc<Cell<u32>>,
+    notified: Rc<Cell<bool>>,
+    proxy: EventLoopProxy<UserEvent>,
+) -> windows::core::Result<()> {
+    let core = webview.webview();
+    // SAFETY: live COM objects owned by the UI thread; every string passed
+    // outlives its call and every out-pointer is a valid local.
+    unsafe {
+        let core22 = core.cast::<ICoreWebView2_22>().ok();
+        for filter in adblock::request_filters() {
+            let filter = HSTRING::from(filter);
+            match &core22 {
+                // Includes requests made by iframes and workers, where most ads load.
+                Some(core22) => core22.AddWebResourceRequestedFilterWithRequestSourceKinds(
+                    &filter,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+                    COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
+                )?,
+                None => core.AddWebResourceRequestedFilter(&filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)?,
+            }
+        }
+        let environment = core.cast::<ICoreWebView2_2>()?.Environment()?;
+        let mut token = 0i64;
+        // A new page starts with a count of zero. Reset here, in the same
+        // place the counting happens, so a reset can never land after (and
+        // wipe out) requests the new page already had blocked.
+        let reset = blocked.clone();
+        core.add_NavigationStarting(
+            &NavigationStartingEventHandler::create(Box::new(move |_, _| {
+                reset.set(0);
+                Ok(())
+            })),
+            &mut token,
+        )?;
+        core.add_WebResourceRequested(
+            &WebResourceRequestedEventHandler::create(Box::new(move |sender, args| {
+                if !enabled.get() {
+                    return Ok(());
+                }
+                let (Some(sender), Some(args)) = (sender, args) else { return Ok(()) };
+                let mut uri = PWSTR::null();
+                args.Request()?.Uri(&mut uri)?;
+                let uri = take_pwstr(uri);
+                let mut page = PWSTR::null();
+                sender.Source(&mut page)?;
+                let page = take_pwstr(page);
+                if adblock::should_block(&uri, &page) {
+                    let response = environment.CreateWebResourceResponse(
+                        None::<&IStream>,
+                        403,
+                        &HSTRING::from("Blocked"),
+                        &HSTRING::new(),
+                    )?;
+                    args.SetResponse(&response)?;
+                    blocked.set(blocked.get().saturating_add(1));
+                    if !notified.replace(true) {
+                        let _ = proxy.send_event(UserEvent::AdsBlocked(tab));
+                    }
+                }
+                Ok(())
+            })),
+            &mut token,
+        )?;
+    }
+    Ok(())
+}
 
 /// Attaches navigation history, favicon, status text, fullscreen, zoom,
 /// audio, crash and pop-up listeners to `webview` for `tab`.

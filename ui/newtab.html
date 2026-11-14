@@ -8,68 +8,74 @@
 <title>New Tab</title>
 <style>
   :root {
-    --bg: #f3f5f8;
-    --glow-a: rgba(37, 99, 235, 0.09);
-    --glow-b: rgba(14, 165, 233, 0.07);
+    --bg: #f4f6fa;
+    --glow-a: rgba(37, 99, 235, 0.10);
+    --glow-b: rgba(14, 165, 233, 0.08);
+    --glow-c: rgba(124, 58, 237, 0.05);
     --surface: #ffffff;
-    --surface-subtle: #f8f9fc;
-    --surface-hover: #ffffff;
-    --text: #1b1f24;
-    --muted: #5b6570;
-    --border: #dde2ea;
-    --border-hover: #b8c2d1;
+    --surface-2: rgba(255, 255, 255, 0.72);
+    --hover: rgba(15, 23, 42, 0.05);
+    --text: #161a20;
+    --muted: #5d6672;
+    --faint: #8a939e;
+    --border: #e1e5ec;
     --accent: #2563eb;
     --accent-soft: rgba(37, 99, 235, 0.10);
-    --accent-ring: rgba(37, 99, 235, 0.22);
+    --accent-ring: rgba(37, 99, 235, 0.25);
     --on-accent: #ffffff;
-    --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.04);
-    --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.07);
-    --shadow-lg: 0 14px 36px rgba(15, 23, 42, 0.11);
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05), 0 2px 8px rgba(15, 23, 42, 0.04);
+    --shadow-lg: 0 2px 4px rgba(15, 23, 42, 0.04), 0 14px 40px rgba(15, 23, 42, 0.10);
     --ease: cubic-bezier(0.2, 0, 0, 1);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #14161b;
-      --glow-a: rgba(122, 167, 255, 0.11);
+      --bg: #121418;
+      --glow-a: rgba(122, 167, 255, 0.12);
       --glow-b: rgba(56, 189, 248, 0.07);
-      --surface: #1d2027;
-      --surface-subtle: #191c22;
-      --surface-hover: #242831;
-      --text: #e7e9ec;
-      --muted: #9aa3ae;
-      --border: #2e333d;
-      --border-hover: #464e5c;
+      --glow-c: rgba(167, 139, 250, 0.06);
+      --surface: #1c1f25;
+      --surface-2: rgba(28, 31, 37, 0.72);
+      --hover: rgba(255, 255, 255, 0.06);
+      --text: #e8eaed;
+      --muted: #a0a8b3;
+      --faint: #79818c;
+      --border: #2c3038;
       --accent: #7aa7ff;
       --accent-soft: rgba(122, 167, 255, 0.14);
-      --accent-ring: rgba(122, 167, 255, 0.24);
-      --on-accent: #0f141e;
-      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
-      --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.36);
-      --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.48);
+      --accent-ring: rgba(122, 167, 255, 0.28);
+      --on-accent: #0e1420;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2);
+      --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.3), 0 16px 44px rgba(0, 0, 0, 0.45);
     }
   }
   body.private {
-    --glow-a: rgba(124, 58, 237, 0.13);
+    --glow-a: rgba(124, 58, 237, 0.14);
     --glow-b: rgba(168, 85, 247, 0.08);
+    --glow-c: rgba(79, 70, 229, 0.06);
     --accent: #7c3aed;
     --accent-soft: rgba(124, 58, 237, 0.11);
-    --accent-ring: rgba(124, 58, 237, 0.24);
+    --accent-ring: rgba(124, 58, 237, 0.26);
   }
   @media (prefers-color-scheme: dark) {
     body.private {
-      --glow-a: rgba(167, 139, 250, 0.15);
+      --glow-a: rgba(167, 139, 250, 0.16);
       --glow-b: rgba(139, 92, 246, 0.09);
       --accent: #a78bfa;
       --accent-soft: rgba(167, 139, 250, 0.16);
-      --accent-ring: rgba(167, 139, 250, 0.26);
+      --accent-ring: rgba(167, 139, 250, 0.3);
       --on-accent: #141022;
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-      animation-duration: 0.001ms !important;
-      transition-duration: 0.001ms !important;
-    }
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+  /* Efficiency mode: flat colours, no shadows, glows or motion. */
+  body.lite { background-image: none !important; }
+  body.lite *, body.lite *::before, body.lite *::after {
+    box-shadow: none !important;
+    transition: none !important;
+    animation: none !important;
+    backdrop-filter: none !important;
   }
 
   * { box-sizing: border-box; }
@@ -77,149 +83,90 @@
   html, body {
     margin: 0;
     min-height: 100%;
-    background-color: var(--bg);
-    background-image:
-      radial-gradient(62% 48% at 22% 0%, var(--glow-a), transparent 72%),
-      radial-gradient(56% 44% at 82% 4%, var(--glow-b), transparent 70%);
-    background-attachment: fixed;
     color: var(--text);
-    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
+  body {
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(60% 50% at 15% -5%, var(--glow-a), transparent 70%),
+      radial-gradient(50% 45% at 90% 0%, var(--glow-b), transparent 70%),
+      radial-gradient(70% 60% at 50% 115%, var(--glow-c), transparent 70%);
+    background-attachment: fixed;
+  }
+  a { color: inherit; text-decoration: none; }
 
   .shell {
     max-width: 780px;
+    min-height: 100vh;
     margin: 0 auto;
-    padding: clamp(24px, 7vh, 72px) 24px 44px;
+    padding: 18px 28px 48px;
     display: flex;
     flex-direction: column;
-    gap: 28px;
   }
 
-  /* ---- Top status strip ------------------------------------------------ */
+  /* ---- top corner -------------------------------------------------------- */
 
-  .topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    min-height: 28px;
-  }
-  .clock-group {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-  #clock-time {
-    font-size: 20px;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    font-variant-numeric: tabular-nums;
-  }
-  #clock-meta {
-    font-size: 13px;
-    color: var(--muted);
-  }
-  .pill-badge {
+  .topbar { display: flex; justify-content: flex-end; min-height: 30px; }
+  .engine-pill {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    height: 28px;
-    padding: 0 11px;
-    border-radius: 999px;
-    background: var(--surface);
+    gap: 7px;
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 15px;
+    background: var(--surface-2);
     border: 1px solid var(--border);
-    box-shadow: var(--shadow-sm);
-    font-size: 12px;
-    font-weight: 500;
     color: var(--muted);
+    font-size: 12px;
+    font-weight: 550;
   }
-  .pill-badge .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--accent);
-  }
-  body.private .pill-badge {
-    color: var(--accent);
-    background: var(--accent-soft);
-    border-color: transparent;
-  }
+  .engine-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  body.private .engine-pill { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
 
-  /* ---- Hero brand + search bar ----------------------------------------- */
+  /* ---- hero: logo, clock, greeting, search ------------------------------- */
 
   .hero {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 20px;
-    padding-top: clamp(4px, 3vh, 22px);
+    text-align: center;
+    padding-top: clamp(12px, 9vh, 96px);
   }
-  .brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 12px;
-    user-select: none;
+  .brand-mark { width: 60px; height: 60px; display: grid; place-items: center; margin-bottom: 14px; }
+  .brand-mark img { width: 60px; height: 60px; display: block; filter: drop-shadow(0 6px 14px rgba(15, 23, 42, 0.16)); }
+  body.private .brand-mark { border-radius: 18px; background: var(--accent-soft); color: var(--accent); }
+  #clock-time {
+    font: 300 clamp(44px, 7vw, 64px)/1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
   }
-  .brand-mark {
-    width: 38px;
-    height: 38px;
-    border-radius: 12px;
-    display: grid;
-    place-items: center;
-    background: var(--accent-soft);
-    color: var(--accent);
-    border: 1px solid var(--border);
-  }
-  /* The app logo stands on its own, without the tile. */
-  .brand-mark.logo {
-    background: none;
-    border: none;
-  }
-  .brand-mark.logo img {
-    width: 38px;
-    height: 38px;
+  #clock-meta { margin-top: 8px; color: var(--muted); font-size: 15px; }
+  .brand-title { display: none; }
+  body.private .brand-title {
     display: block;
-  }
-  .brand-title {
     margin: 0;
-    font-size: clamp(22px, 3.1vw, 28px);
-    font-weight: 650;
-    letter-spacing: -0.025em;
+    font: 650 30px/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    letter-spacing: -0.02em;
   }
+  body.private #clock-time { display: none; }
 
-  .search-form {
-    width: 100%;
-    max-width: 620px;
-    position: relative;
-  }
+  .search-form { width: 100%; max-width: 640px; margin-top: 30px; }
   .search-box {
-    height: 52px;
+    height: 56px;
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 0 8px 0 16px;
-    border-radius: 16px;
+    padding: 0 7px 0 20px;
+    border-radius: 28px;
     background: var(--surface);
     border: 1px solid var(--border);
-    box-shadow: var(--shadow-md);
-    transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease), background-color 0.16s var(--ease);
+    box-shadow: var(--shadow-lg);
+    transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
   }
-  .search-box:hover {
-    border-color: var(--border-hover);
-  }
-  .search-box:focus-within {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-ring), var(--shadow-lg);
-  }
-  .search-icon {
-    flex: none;
-    color: var(--muted);
-    display: grid;
-    place-items: center;
-  }
+  .search-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-ring), var(--shadow-lg); }
+  .search-icon { flex: none; color: var(--faint); display: grid; place-items: center; }
   #q {
     flex: 1;
     min-width: 0;
@@ -228,308 +175,202 @@
     outline: 0;
     background: transparent;
     color: var(--text);
-    font: 15px/1.3 inherit;
+    font: 16px/1.3 inherit;
   }
-  #q::placeholder {
-    color: var(--muted);
-  }
+  #q::placeholder { color: var(--faint); }
   .kbd-hint {
     flex: none;
-    padding: 2px 7px;
+    padding: 2px 8px;
     border-radius: 6px;
-    background: var(--surface-subtle);
     border: 1px solid var(--border);
-    color: var(--muted);
+    color: var(--faint);
     font-size: 11px;
     font-weight: 600;
     user-select: none;
   }
   .search-clear {
     flex: none;
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
     border: 0;
-    border-radius: 8px;
+    border-radius: 16px;
     background: transparent;
     color: var(--muted);
     display: grid;
     place-items: center;
     cursor: pointer;
   }
-  .search-clear:hover {
-    background: var(--accent-soft);
-    color: var(--text);
-  }
+  .search-clear:hover { background: var(--hover); color: var(--text); }
   .search-go {
     flex: none;
-    height: 36px;
-    padding: 0 14px;
+    width: 42px;
+    height: 42px;
     border: 0;
-    border-radius: 11px;
+    border-radius: 21px;
     background: var(--accent);
     color: var(--on-accent);
-    font: 500 13px/1 inherit;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
+    display: grid;
+    place-items: center;
     cursor: pointer;
-    transition: transform 0.14s var(--ease), opacity 0.14s var(--ease);
+    transition: transform 0.14s var(--ease), filter 0.14s var(--ease);
   }
-  .search-go:hover { opacity: 0.92; }
-  .search-go:active { transform: scale(0.97); }
+  .search-go:hover { filter: brightness(1.06); }
+  .search-go:active { transform: scale(0.94); }
 
-  /* ---- Private Info Card ----------------------------------------------- */
+  /* ---- sections ------------------------------------------------------------- */
 
-  .private-card {
-    width: 100%;
-    max-width: 620px;
-    margin: 4px auto 0;
-    padding: 20px 22px;
-    border-radius: 16px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    box-shadow: var(--shadow-sm);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .private-card p {
-    margin: 0;
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1.55;
-  }
-  .private-traits {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .trait {
-    padding: 5px 10px;
-    border-radius: 8px;
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-size: 12px;
-    font-weight: 500;
-  }
+  .section { margin-top: 44px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 6px 12px; }
+  .section-title { margin: 0; font-size: 13px; font-weight: 650; color: var(--muted); }
+  .section-note { font-size: 12px; color: var(--faint); }
 
-  /* ---- Quick Access Grid ----------------------------------------------- */
-
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .section-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 0 2px;
-  }
-  .section-title {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-  }
-  .section-note {
-    font-size: 12px;
-    color: var(--muted);
-  }
-
+  /* Shortcuts: icon tiles, like apps on a home screen. */
+  /* Four per row (two even rows of the eight shortcuts), centred. */
+  #quick-section { max-width: 560px; width: 100%; margin-left: auto; margin-right: auto; }
   .tiles {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-  }
-  @media (max-width: 600px) {
-    .tiles {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .shell {
-      padding: 20px 16px 32px;
-      gap: 22px;
-    }
+    gap: 6px;
   }
   .tile {
     position: relative;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 14px;
-    border-radius: 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    box-shadow: var(--shadow-sm);
-    color: inherit;
-    text-decoration: none;
-    overflow: hidden;
-    transition: transform 0.16s var(--ease), border-color 0.16s var(--ease),
-      box-shadow 0.16s var(--ease), background-color 0.16s var(--ease);
-  }
-  .tile:hover {
-    transform: translateY(-2px);
-    background: var(--surface-hover);
-    border-color: var(--border-hover);
-    box-shadow: var(--shadow-md);
-  }
-  .tile:active {
-    transform: translateY(0);
-  }
-  .tile:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .tile-top {
-    width: 100%;
-    display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 10px;
+    padding: 16px 8px 12px;
+    border-radius: 16px;
+    transition: background-color 0.14s var(--ease), transform 0.14s var(--ease);
   }
+  .tile:hover { background: var(--hover); }
+  .tile:active { transform: scale(0.97); }
+  .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .monogram {
-    width: 34px;
-    height: 34px;
+    position: relative;
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+    display: grid;
+    place-items: center;
+    color: #ffffff;
+    font: 650 21px/1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  }
+  .bm-star {
+    position: absolute;
+    right: -5px;
+    bottom: -5px;
+    width: 20px;
+    height: 20px;
     border-radius: 10px;
     display: grid;
     place-items: center;
-    font-size: 15px;
-    font-weight: 700;
-    color: #ffffff;
-    flex: none;
-    letter-spacing: -0.02em;
-  }
-  .bm-star {
-    color: var(--accent);
-    opacity: 0.9;
-    display: grid;
-    place-items: center;
+    background: var(--surface);
+    color: #f59e0b;
+    box-shadow: var(--shadow-sm);
   }
   .tile-title {
     width: 100%;
-    font-size: 13px;
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tile-host {
-    width: 100%;
-    margin-top: -6px;
-    font-size: 11.5px;
-    color: var(--muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* ---- Recent chips & Empty state -------------------------------------- */
-
-  .recent-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .recent-chip {
-    max-width: 100%;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 12px 7px 9px;
-    border-radius: 999px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    box-shadow: var(--shadow-sm);
-    color: inherit;
-    text-decoration: none;
     font-size: 12.5px;
-    transition: border-color 0.15s var(--ease), background-color 0.15s var(--ease);
+    font-weight: 500;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .recent-chip:hover {
-    border-color: var(--border-hover);
-    background: var(--surface-hover);
+
+  /* Continue browsing: recent pages in a list. */
+  .recent-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 12px;
+    padding: 8px;
+    border-radius: 18px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
   }
+  .recent-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 12px;
+    transition: background-color 0.14s var(--ease);
+  }
+  .recent-row:hover { background: var(--hover); }
+  .recent-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .recent-dot {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
+    flex: none;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
     display: grid;
     place-items: center;
     color: #ffffff;
-    font-size: 10px;
-    font-weight: 700;
-    flex: none;
-  }
-  .recent-label {
-    max-width: 210px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .empty-card {
-    padding: 20px 22px;
-    border-radius: 16px;
-    background: var(--surface);
-    border: 1px dashed var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .empty-card p {
-    margin: 0;
-    color: var(--muted);
     font-size: 13px;
+    font-weight: 700;
   }
-  .shortcut-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 16px;
+  .recent-text { min-width: 0; display: flex; flex-direction: column; }
+  .recent-title, .recent-host { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .recent-title { font-size: 13px; font-weight: 550; }
+  .recent-host { font-size: 11.5px; color: var(--faint); }
+
+  /* First run and private tabs. */
+  .info-card {
+    max-width: 640px;
+    margin: 40px auto 0;
+    padding: 22px 24px;
+    border-radius: 18px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
   }
-  .shortcut-item {
+  .info-card p { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
     display: inline-flex;
     align-items: center;
     gap: 7px;
+    padding: 6px 11px;
+    border-radius: 10px;
+    background: var(--accent-soft);
+    color: var(--accent);
     font-size: 12.5px;
-    color: var(--muted);
+    font-weight: 550;
   }
+  .shortcut-chip { background: var(--hover); color: var(--muted); }
   kbd {
-    padding: 2px 6px;
+    padding: 1px 6px;
     border-radius: 6px;
-    background: var(--surface-subtle);
+    background: var(--surface);
     border: 1px solid var(--border);
     color: var(--text);
-    font: 600 11px/1.2 "Segoe UI Variable Text", "Segoe UI", monospace;
+    font: 600 11px/1.4 "Segoe UI", system-ui, sans-serif;
+  }
+
+  @media (max-width: 640px) {
+    .shell { padding: 14px 16px 32px; }
+    .recent-list { grid-template-columns: minmax(0, 1fr); }
+    .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
 </style>
 </head>
 <body>
   <main class="shell">
     <header class="topbar">
-      <div class="clock-group">
-        <span id="clock-time">--:--</span>
-        <span id="clock-meta"></span>
-      </div>
-      <div id="mode-pill" class="pill-badge">
-        <span class="dot"></span>
-        <span id="mode-label">Search</span>
-      </div>
+      <div class="engine-pill"><span class="dot"></span><span id="mode-label">Search</span></div>
     </header>
 
     <section class="hero" aria-label="Search">
-      <div class="brand">
-        <div class="brand-mark" id="brand-mark" aria-hidden="true"></div>
-        <h1 class="brand-title" id="brand-title">Rust Browser</h1>
-      </div>
+      <div class="brand-mark" id="brand-mark" aria-hidden="true"></div>
+      <h1 class="brand-title" id="brand-title">Rust Browser</h1>
+      <div id="clock-time">--:--</div>
+      <div id="clock-meta"></div>
 
       <form class="search-form" id="search-form" autocomplete="off">
         <div class="search-box">
           <span class="search-icon" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <circle cx="11" cy="11" r="7"></circle>
               <path d="M20 20l-3.5-3.5"></path>
             </svg>
@@ -542,8 +383,7 @@
             </svg>
           </button>
           <button type="submit" class="search-go" aria-label="Search">
-            <span>Go</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
               <path d="M5 12h14M13 6l6 6-6 6"></path>
             </svg>
           </button>
@@ -551,38 +391,36 @@
       </form>
     </section>
 
-    <section class="private-card" id="private-card" hidden>
-      <p>Pages opened in this Private Tab do not save to your browsing history, and site cookies and storage are discarded when the tab closes.</p>
-      <div class="private-traits">
-        <span class="trait">No history saved</span>
-        <span class="trait">Isolated session storage</span>
-        <span class="trait">Tracking prevention active</span>
+    <section class="info-card" id="private-card" hidden>
+      <p>Pages you open in private tabs aren't saved to your history, and their cookies and site data are deleted when you close the last private tab.</p>
+      <div class="chips">
+        <span class="chip">No history saved</span>
+        <span class="chip">Separate cookies and storage</span>
+        <span class="chip">Tracking prevention on</span>
       </div>
     </section>
 
     <section class="section" id="quick-section" hidden>
       <div class="section-head">
-        <h2 class="section-title">Quick access</h2>
+        <h2 class="section-title">Shortcuts</h2>
         <span class="section-note" id="quick-note"></span>
       </div>
       <div class="tiles" id="tiles"></div>
     </section>
 
-    <section class="section" id="empty-section" hidden>
-      <div class="empty-card">
-        <p>Your bookmarks and most visited websites will appear here for quick access.</p>
-        <div class="shortcut-row">
-          <span class="shortcut-item"><kbd>Ctrl+L</kbd> Address bar</span>
-          <span class="shortcut-item"><kbd>Ctrl+D</kbd> Bookmark page</span>
-          <span class="shortcut-item"><kbd>Ctrl+T</kbd> New tab</span>
-          <span class="shortcut-item"><kbd>Ctrl+Shift+N</kbd> Private tab</span>
-        </div>
+    <section class="info-card" id="empty-section" hidden>
+      <p>Your bookmarks and most visited sites will show up here. Coming from another browser? Import your bookmarks and history from the menu (⋮ › Import from Chrome or Edge).</p>
+      <div class="chips">
+        <span class="chip shortcut-chip"><kbd>Ctrl</kbd><kbd>L</kbd> Address bar</span>
+        <span class="chip shortcut-chip"><kbd>Ctrl</kbd><kbd>D</kbd> Bookmark</span>
+        <span class="chip shortcut-chip"><kbd>F9</kbd> Reader mode</span>
+        <span class="chip shortcut-chip"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>N</kbd> Private tab</span>
       </div>
     </section>
 
     <section class="section" id="recent-section" hidden>
       <div class="section-head">
-        <h2 class="section-title">Jump back in</h2>
+        <h2 class="section-title">Continue browsing</h2>
       </div>
       <div class="recent-list" id="recent-list"></div>
     </section>
@@ -593,16 +431,20 @@
   (() => {
     // assets/logo-76.png (the app logo at 2x), embedded because this page may only load data: images.
     const LOGO_IMG = `<img alt="" src="data:image/png;base64,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">`;
-    const SHIELD_SVG = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z"></path></svg>`;
-    const STAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.8l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 16.7l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 2.8z"></path></svg>`;
-    const PALETTE = ['#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#4f46e5'];
+    const SHIELD_SVG = `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z"></path></svg>`;
+    const STAR_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.8l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 16.7l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 2.8z"></path></svg>`;
+    // Pairs of colours for the shortcut icons' gradients.
+    const PALETTE = [
+      ['#3b82f6', '#1d4ed8'], ['#06b6d4', '#0e7490'], ['#10b981', '#047857'], ['#f59e0b', '#c2410c'],
+      ['#ef4444', '#b91c1c'], ['#8b5cf6', '#6d28d9'], ['#ec4899', '#be185d'], ['#6366f1', '#4338ca'],
+    ];
 
     const $ = (id) => document.getElementById(id);
     const $q = $('q');
     const $clear = $('q-clear');
     const $slash = $('kbd-slash');
 
-    let data = { private: false, engineName: 'Google', searchPrefix: 'https://www.google.com/search?q=', quick: [], recent: [] };
+    let data = { private: false, lite: false, engineName: 'Google', searchPrefix: 'https://www.google.com/search?q=', quick: [], recent: [] };
     try {
       const raw = $('ntp-data').textContent;
       if (raw && raw[0] === '{') data = Object.assign(data, JSON.parse(raw));
@@ -622,13 +464,18 @@
       }
     }
 
-    function pickColor(str) {
+    function colorsFor(str) {
       let h = 2166136261;
       for (let i = 0; i < str.length; i++) {
         h ^= str.charCodeAt(i);
         h = Math.imul(h, 16777619);
       }
       return PALETTE[(h >>> 0) % PALETTE.length];
+    }
+
+    function paint(el, key) {
+      const [from, to] = colorsFor(key);
+      el.style.background = data.lite ? to : 'linear-gradient(135deg, ' + from + ', ' + to + ')';
     }
 
     function initialOf(title, host) {
@@ -657,26 +504,24 @@
 
     function updateClock() {
       const now = new Date();
-      const hh = String(now.getHours()).padStart(2, '0');
-      const mm = String(now.getMinutes()).padStart(2, '0');
-      $('clock-time').textContent = hh + ':' + mm;
+      $('clock-time').textContent = now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
       const hr = now.getHours();
-      const part = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
-      const dateStr = now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-      $('clock-meta').textContent = (data.private ? '' : part + ' · ') + dateStr;
+      const part = hr < 5 ? 'Good night' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+      const dateStr = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+      $('clock-meta').textContent = data.private ? 'Browse without saving history' : part + ' · ' + dateStr;
     }
 
     function render(next) {
       data = Object.assign({}, data, next);
       const isPrivate = !!data.private;
       document.body.classList.toggle('private', isPrivate);
+      document.body.classList.toggle('lite', !!data.lite);
       document.title = isPrivate ? 'Private Tab' : 'New Tab';
       $('brand-mark').innerHTML = isPrivate ? SHIELD_SVG : LOGO_IMG;
-      $('brand-mark').classList.toggle('logo', !isPrivate);
-      $('brand-title').textContent = isPrivate ? 'Private Tab' : 'Rust Browser';
+      $('brand-title').textContent = isPrivate ? 'Private tab' : 'Rust Browser';
       const engine = data.engineName || 'Google';
       $('mode-label').textContent = isPrivate ? 'Private · ' + engine : engine;
-      $q.placeholder = isPrivate ? 'Search privately with ' + engine : 'Search ' + engine + ' or enter address';
+      $q.placeholder = isPrivate ? 'Search privately with ' + engine : 'Search ' + engine + ' or type a web address';
 
       updateClock();
 
@@ -698,40 +543,32 @@
         $('quick-section').hidden = false;
         $('empty-section').hidden = true;
         const bmCount = quick.filter((i) => i.bookmarked).length;
-        $('quick-note').textContent = bmCount > 0 ? 'Bookmarks & most visited' : 'Most visited';
+        $('quick-note').textContent = bmCount > 0 ? 'Bookmarks and most visited' : 'Most visited';
 
         for (const item of quick) {
           const host = hostOf(item.url);
           const a = document.createElement('a');
           a.className = 'tile';
           a.href = item.url;
-
-          const top = document.createElement('div');
-          top.className = 'tile-top';
+          a.title = (item.title || host) + '\n' + host;
 
           const mono = document.createElement('span');
           mono.className = 'monogram';
-          mono.style.background = pickColor(host);
+          paint(mono, host);
           mono.textContent = initialOf(item.title, host);
-          top.append(mono);
-
           if (item.bookmarked) {
             const star = document.createElement('span');
             star.className = 'bm-star';
-            star.title = 'Bookmarked';
+            star.setAttribute('aria-label', 'Bookmarked');
             star.innerHTML = STAR_SVG;
-            top.append(star);
+            mono.append(star);
           }
 
           const title = document.createElement('div');
           title.className = 'tile-title';
           title.textContent = item.title || host;
 
-          const sub = document.createElement('div');
-          sub.className = 'tile-host';
-          sub.textContent = host;
-
-          a.append(top, title, sub);
+          a.append(mono, title);
           $tiles.append(a);
         }
       } else {
@@ -746,19 +583,25 @@
         for (const item of recent) {
           const host = hostOf(item.url);
           const a = document.createElement('a');
-          a.className = 'recent-chip';
+          a.className = 'recent-row';
           a.href = item.url;
 
           const dot = document.createElement('span');
           dot.className = 'recent-dot';
-          dot.style.background = pickColor(host);
+          paint(dot, host);
           dot.textContent = initialOf(item.title, host);
 
-          const label = document.createElement('span');
-          label.className = 'recent-label';
-          label.textContent = item.title || host;
+          const text = document.createElement('span');
+          text.className = 'recent-text';
+          const title = document.createElement('span');
+          title.className = 'recent-title';
+          title.textContent = item.title || host;
+          const sub = document.createElement('span');
+          sub.className = 'recent-host';
+          sub.textContent = host;
+          text.append(title, sub);
 
-          a.append(dot, label);
+          a.append(dot, text);
           $recentList.append(a);
         }
       } else {
@@ -809,4 +652,3 @@
   </script>
 </body>
 </html>
-

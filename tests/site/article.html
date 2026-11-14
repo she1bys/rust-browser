@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Test article - Rust Browser test site</title>
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  nav, aside, footer { background: #eee; padding: 12px; }
+  .layout { display: flex; gap: 24px; padding: 24px; }
+  main { flex: 3; } aside { flex: 1; }
+</style>
+</head>
+<body>
+  <nav><a href="/">Home</a> · <a href="/a">Section A</a> · <a href="/b">Section B</a> · <a href="/c">Section C</a></nav>
+  <div class="layout">
+    <main>
+      <article>
+        <h1>How a small browser keeps its memory low</h1>
+        <p>This page is part of the Rust Browser test site. It exists so the automated tests can check that reader mode finds the article, copies its text, and leaves the menus, sidebars and footers behind.</p>
+        <p>A web browser spends most of its memory on the pages it shows. Every open tab runs scripts, keeps images decoded, and holds the layout of the page ready to draw. A lightweight browser therefore saves the most by doing less work for tabs that are out of sight, and by not loading things the reader never asked for.</p>
+        <h2>Freezing and sleeping tabs</h2>
+        <p>When a tab has been in the background for a while, its scripts can be paused without losing anything. The page looks exactly the same when you come back to it. After a longer time, the tab can be put to sleep entirely, which frees all of its memory; it simply reloads the next time it is opened.</p>
+        <p>Tabs that are playing sound, downloading a file, or showing something on screen are never paused, because the person using the browser would notice straight away. Good defaults matter more than clever settings, since most people never open the settings page at all.</p>
+        <h2>Blocking what nobody asked for</h2>
+        <p>Advertising and tracking scripts are often a large part of what a page downloads and runs. Blocking them at the network level means they are never fetched, never parsed and never executed, so pages appear sooner and use less memory and battery. The trade-off is that a few sites expect those scripts, which is why the blocker can be turned off with a single switch.</p>
+        <blockquote>The fastest code is the code that never runs.</blockquote>
+        <p>Finally, the browser itself should stay small: a few megabytes for the program, a single shared engine for all tabs, and helper windows that are only created when they are actually used. Each of these choices is modest on its own, but together they make the browser comfortable on older and smaller computers.</p>
+      </article>
+    </main>
+    <aside>
+      <h3>Related</h3>
+      <ul><li><a href="/r1">Another story</a></li><li><a href="/r2">Yet another story</a></li><li><a href="/r3">More stories</a></li></ul>
+    </aside>
+  </div>
+  <footer>Rust Browser test site · <a href="/about">About</a> · <a href="/contact">Contact</a></footer>
+</body>
+</html>

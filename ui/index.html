@@ -52,6 +52,14 @@
     }
   }
 
+  /* Efficiency mode: no animations or blur, so slow PCs stay responsive. */
+  body.efficient *, body.efficient *::before, body.efficient *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    backdrop-filter: none !important;
+  }
+
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body {
@@ -501,6 +509,25 @@
     font-weight: 600;
   }
   #zoom-btn:hover { background: var(--press); }
+  /* Ads and trackers blocked on this page. */
+  #adblock-badge {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 22px;
+    margin-right: 2px;
+    padding: 0 7px 0 5px;
+    border-radius: 11px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+    user-select: none;
+  }
+  #adblock-badge svg { width: 14px; height: 14px; }
+  #adblock-badge:hover { background: var(--hover); color: var(--text); }
   /* Left end of the address bar: what kind of page this is. */
   .sec {
     flex: none;
@@ -1015,6 +1042,9 @@
   .dl-status { margin-top: 3px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dl.failed .dl-status, .dl.missing .dl-status { color: var(--danger); }
   #update-status.error { color: var(--danger); }
+  .import-buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  #settings-import.flash .card { animation: section-flash 1.4s var(--ease); }
+  @keyframes section-flash { 0%, 40% { box-shadow: 0 0 0 2px var(--accent); } }
   .dl.missing .dl-name, .dl.failed .dl-name, .dl.cancelled .dl-name { text-decoration: line-through; color: var(--muted); }
   .dl-bar { height: 4px; margin-top: 8px; border-radius: 2px; background: var(--border); overflow: hidden; }
   .dl-fill { height: 100%; width: 0; border-radius: 2px; background: var(--accent); transition: width 0.2s linear; }
@@ -1154,6 +1184,13 @@
       </button>
       <span id="status-pill" hidden></span>
       <button id="zoom-btn" title="Reset zoom (Ctrl+0)" aria-label="Reset zoom" hidden>100%</button>
+      <button id="reader-btn" class="icon-btn" title="Reader mode (F9)" aria-label="Reader mode" hidden>
+        <svg viewBox="0 0 24 24"><path d="M3 5.5c2.5-1 5.5-1 9 1 3.5-2 6.5-2 9-1v13c-2.5-1-5.5-1-9 1-3.5-2-6.5-2-9-1z"/><path d="M12 6.5v13"/></svg>
+      </button>
+      <span id="adblock-badge" role="img" hidden>
+        <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg>
+        <span id="adblock-count"></span>
+      </span>
       <button id="bookmark-btn" class="icon-btn" title="Bookmark this page (Ctrl+D)" aria-label="Bookmark this page">
         <svg viewBox="0 0 24 24"><path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8l-5.8 3.1 1.1-6.5L2.6 9.8l6.5-.9z"/></svg>
       </button>
@@ -1183,7 +1220,7 @@
       <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
       <span id="update-label">Update</span>
     </button>
-    <button id="menu-btn" class="icon-btn" title="Menu (Alt+F)" aria-label="Menu" aria-haspopup="menu">
+    <button id="menu-btn" class="icon-btn" title="Menu (Alt+F)" aria-label="Menu">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="18.5" r="1.3"/></svg>
     </button>
   </div>
@@ -1288,6 +1325,13 @@
             </div>
             <div id="set-memory-saver" class="seg" role="radiogroup" aria-label="Memory saver"></div>
           </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Efficiency mode</div>
+              <div id="efficiency-hint" class="row-hint"></div>
+            </div>
+            <div id="set-efficiency" class="seg" role="radiogroup" aria-label="Efficiency mode"></div>
+          </div>
         </div>
         <p class="hint section-note">Never put to sleep: the tab you're looking at, tabs playing sound, tabs with a download running, and private tabs. Hover over a tab to see how much memory it uses.</p>
       </section>
@@ -1315,6 +1359,13 @@
               <div class="row-hint">Stops pages from opening windows you didn't click for. You can still open a blocked one.</div>
             </div>
             <button class="switch" role="switch" data-setting="blockPopups" aria-checked="true" aria-label="Block pop-ups"></button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Block ads and trackers</div>
+              <div class="row-hint">Pages load faster and use less memory. If a site doesn't work right, turn this off and reload it.</div>
+            </div>
+            <button class="switch" role="switch" data-setting="blockAds" aria-checked="true" aria-label="Block ads and trackers"></button>
           </div>
           <div class="row">
             <div class="row-text">
@@ -1346,6 +1397,20 @@
           </div>
         </div>
         <p class="hint section-note">Private tabs (Ctrl+Shift+N) keep no history, cookies or saved tabs after the browser closes.</p>
+      </section>
+
+      <section id="settings-import">
+        <h2>Import</h2>
+        <div class="card">
+          <div class="row">
+            <div class="row-text">
+              <div>Bring in bookmarks and history</div>
+              <div id="import-hint" class="row-hint">Copies them from another browser on this PC. Nothing in that browser changes.</div>
+            </div>
+            <div id="import-buttons" class="import-buttons"></div>
+          </div>
+        </div>
+        <p class="hint section-note">Saved passwords can't be imported: the web engine Rust Browser uses has no way to add them. In the other browser, open its password settings to look them up, and Rust Browser offers to save each one the next time you sign in.</p>
       </section>
 
       <section>
@@ -1875,6 +1940,7 @@
 
   choiceGroup($('set-memory-saver'), 'memorySaver',
     [['off', 'Off'], ['balanced', 'Balanced'], ['maximum', 'Maximum']], true);
+  choiceGroup($('set-efficiency'), 'efficiencyMode', [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], true);
   const MEMORY_SAVER_HINTS = {
     off: 'Tabs in the background keep running and keep their memory.',
     balanced: 'Freezes tabs after 30 seconds in the background and frees their memory after 30 minutes. A tab put to sleep reloads when you open it and loses its back/forward list.',
@@ -1944,6 +2010,16 @@
     setChoice($('set-tracking'), s.trackingPrevention);
     setChoice($('set-memory-saver'), s.memorySaver);
     $('memory-saver-hint').textContent = MEMORY_SAVER_HINTS[s.memorySaver] || '';
+    setChoice($('set-efficiency'), s.efficiencyMode);
+    {
+      const about = initData.about || {};
+      const gb = about.memory ? Math.round(about.memory / (1024 * 1024 * 1024)) : null;
+      const pc = gb ? 'This PC has ' + gb + ' GB of memory' : 'This PC';
+      const effect = 'The strongest memory saver, and no animations or blur effects.';
+      $('efficiency-hint').textContent = s.efficiencyMode === 'auto'
+        ? effect + ' Auto turns it on for PCs with 4 GB of memory or less. ' + pc + (about.lowEnd ? ', so it is on.' : ', so it is off.')
+        : effect + (s.efficiencyMode === 'on' ? ' On.' : ' Off.');
+    }
     for (const sw of document.querySelectorAll('.switch[data-setting]')) {
       sw.setAttribute('aria-checked', String(!!s[sw.dataset.setting]));
     }
@@ -2002,6 +2078,36 @@
     $action.dataset.act = offerUpdate ? 'install' : 'check';
     $action.disabled = working || u.state === 'checking';
   }
+  // Settings > Import: one button per browser found on this PC.
+  function renderImportButtons() {
+    const sources = initData.importSources || [];
+    const $buttons = $('import-buttons');
+    $buttons.textContent = '';
+    for (const source of sources) {
+      const b = document.createElement('button');
+      b.className = 'btn';
+      b.textContent = source.name;
+      b.title = 'Import bookmarks and history from ' + source.name;
+      b.addEventListener('click', () => send({ type: 'importFrom', source: source.id }));
+      $buttons.append(b);
+    }
+    if (!sources.length) {
+      $('import-hint').textContent = 'No other browser (Chrome, Edge or Brave) was found on this PC.';
+    }
+  }
+
+  // Opens a part of Settings (the menu's "Import from Chrome or Edge…").
+  function showSettingsSection(name) {
+    const section = $('settings-' + name);
+    if (!section) return;
+    section.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    section.classList.remove('flash');
+    void section.offsetWidth;
+    section.classList.add('flash');
+    const first = section.querySelector('button');
+    if (first) first.focus({ preventScroll: true });
+  }
+
   $('update-btn').addEventListener('click', () => send({ type: 'installUpdate' }));
   $('update-action').addEventListener('click', (e) => {
     send({ type: e.currentTarget.dataset.act === 'install' ? 'installUpdate' : 'checkForUpdates' });
@@ -2266,6 +2372,7 @@
     initData = data || initData;
     updateAddressPlaceholder();
     renderSettings();
+    renderImportButtons();
   }
 
   function setSuggestions(items) {
@@ -2416,6 +2523,7 @@
     setTimeout(updateTabOverflow, 260);
 
     document.body.classList.toggle('maximized', !!state.maximized);
+    document.body.classList.toggle('efficient', !!state.efficiency);
     const maxLabel = state.maximized ? 'Restore' : 'Maximize';
     if ($('win-max').title !== maxLabel) {
       $('win-max').title = maxLabel;
@@ -2459,6 +2567,18 @@
     const $zoomBtn = $('zoom-btn');
     $zoomBtn.hidden = zoom === 100;
     if (!($zoomBtn.hidden)) $zoomBtn.textContent = zoom + '%';
+
+    $('reader-btn').hidden = !(tab && tab.canRead) || editing;
+
+    const blocked = tab && !editing ? (tab.adsBlocked || 0) : 0;
+    const $adblock = $('adblock-badge');
+    $adblock.hidden = blocked === 0;
+    if (blocked) {
+      $('adblock-count').textContent = blocked > 99 ? '99+' : String(blocked);
+      const text = blocked === 1 ? '1 ad or tracker blocked on this page' : blocked + ' ads and trackers blocked on this page';
+      $adblock.title = text;
+      $adblock.setAttribute('aria-label', text);
+    }
 
     const $status = $('status-pill');
     const showStatus = !editing && !!state.statusText && !state.panel && !downloadsTabActive;
@@ -2654,6 +2774,7 @@
   });
   $('home').addEventListener('click', () => send({ type: 'goHome' }));
   $('zoom-btn').addEventListener('click', () => send({ type: 'resetZoom' }));
+  $('reader-btn').addEventListener('click', () => command('readerMode'));
   $('bookmark-btn').addEventListener('click', () => send({ type: 'toggleBookmark' }));
   $('split-btn').addEventListener('click', () => command('toggleSplitView'));
   $('memory-btn').addEventListener('click', () => {
@@ -2696,6 +2817,7 @@
     else if (ctrl && e.shiftKey && k === 'o') togglePanel('bookmarks');
     else if (ctrl && e.shiftKey && k === 'b') command('toggleBookmarksBar');
     else if (e.key === 'F11' && !e.ctrlKey && !e.altKey) command('fullscreen');
+    else if (e.key === 'F9' && !e.ctrlKey && !e.altKey && !e.shiftKey) command('readerMode');
     else if (e.key === 'F12' && !e.ctrlKey && !e.altKey) command('devTools');
     else if (ctrl && !e.shiftKey && k === 'f') command('find');
     else if (ctrl && !e.shiftKey && k === 'p') command('print');
@@ -2749,7 +2871,9 @@
     if (showStatus) $status.textContent = state.statusText;
   }
 
-  window.browser = { init, render, setStatus, setSuggestions, focusAddress, openMenu, focusFilter, setMemoryTotal };
+  window.browser = {
+    init, render, setStatus, setSuggestions, focusAddress, openMenu, focusFilter, setMemoryTotal, showSettingsSection,
+  };
   send({ type: 'ready' });
 })();
 </script>

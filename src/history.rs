@@ -70,6 +70,31 @@ impl History {
         true
     }
 
+    /// Merges history brought in from another browser: newest first, keeping
+    /// the most recent visit and highest visit count for pages in both, and
+    /// at most the usual number of entries. Returns how many new pages it has.
+    pub fn import(&mut self, entries: Vec<HistoryEntry>) -> usize {
+        let mut new_urls = Vec::new();
+        for entry in entries {
+            if !is_recordable(&entry.url) {
+                continue;
+            }
+            match self.items.iter_mut().find(|e| e.url == entry.url) {
+                Some(existing) => {
+                    existing.visits = existing.visits.max(entry.visits);
+                    existing.last_visited = existing.last_visited.max(entry.last_visited);
+                }
+                None => {
+                    new_urls.push(entry.url.clone());
+                    self.items.push(entry);
+                }
+            }
+        }
+        self.items.sort_by_key(|e| std::cmp::Reverse(e.last_visited));
+        self.items.truncate(MAX_ENTRIES);
+        new_urls.iter().filter(|url| self.items.iter().any(|e| &e.url == *url)).count()
+    }
+
     /// Updates the title of the most recent entry matching `url`.
     pub fn update_title(&mut self, url: &str, title: &str) -> bool {
         if title.trim().is_empty() {
@@ -137,6 +162,25 @@ mod tests {
             h.record(&format!("https://example.com/{i}"), "X");
         }
         assert_eq!(h.items().len(), MAX_ENTRIES);
+    }
+
+    #[test]
+    fn imports_and_merges_by_date() {
+        let mut h = History::default();
+        h.record("https://a.example/", "A");
+        let now = h.items()[0].last_visited;
+        let entry =
+            |url: &str, visits, last_visited| HistoryEntry { url: url.into(), title: url.into(), visits, last_visited };
+        let added = h.import(vec![
+            entry("https://a.example/", 9, 100),
+            entry("https://b.example/", 2, now + 10),
+            entry("chrome://settings/", 1, now),
+        ]);
+        assert_eq!(added, 1);
+        assert_eq!(h.items()[0].url, "https://b.example/", "newest first");
+        assert_eq!(h.items()[1].visits, 9, "highest visit count kept");
+        assert_eq!(h.items()[1].last_visited, now, "most recent visit kept");
+        assert_eq!(h.items().len(), 2);
     }
 
     #[test]

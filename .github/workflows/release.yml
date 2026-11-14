@@ -30,7 +30,7 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --target aarch64-pc-windows-msvc
           rustup default stable
 
       - uses: Swatinem/rust-cache@v2
@@ -38,8 +38,12 @@ jobs:
       - name: Test
         run: cargo test
 
-      - name: Build release
+      - name: Build release (x64)
         run: cargo build --release
+
+      # Native build for ARM laptops; the installer picks the right one.
+      - name: Build release (ARM64)
+        run: cargo build --release --target aarch64-pc-windows-msvc
 
       - name: Build installer
         shell: pwsh
@@ -62,6 +66,7 @@ jobs:
           # https://github.com/<owner>/rust-browser/releases/latest/download/RustBrowser-Setup.exe
           Copy-Item "target\installer\RustBrowser-Setup-$env:VERSION.exe" dist\RustBrowser-Setup.exe
           Copy-Item target\release\rust-browser.exe "dist\rust-browser-$env:VERSION-portable.exe"
+          Copy-Item target\aarch64-pc-windows-msvc\release\rust-browser.exe "dist\rust-browser-$env:VERSION-arm64-portable.exe"
           # Hash first, then write: writing while listing would hash the sums file itself.
           $sums = Get-ChildItem dist -File | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
@@ -75,9 +80,9 @@ jobs:
         shell: pwsh
         run: |
           $notes = @"
-          **Install:** download ``RustBrowser-Setup-$env:VERSION.exe`` and run it. No administrator rights needed; it installs the Microsoft Edge WebView2 Runtime if your PC doesn't have it (Windows 10 and 11 usually do).
+          **Install:** download ``RustBrowser-Setup-$env:VERSION.exe`` and run it. No administrator rights needed; it installs the Microsoft Edge WebView2 Runtime if your PC doesn't have it (Windows 10 and 11 usually do). It works on regular (x64) and ARM PCs, and installs the native version for each.
 
-          **Portable:** ``rust-browser-$env:VERSION-portable.exe`` runs without installing (needs the WebView2 Runtime).
+          **Portable:** ``rust-browser-$env:VERSION-portable.exe`` (or ``rust-browser-$env:VERSION-arm64-portable.exe`` for ARM PCs) runs without installing (needs the WebView2 Runtime).
 
           Windows may show a SmartScreen warning because the app isn't code-signed yet: choose *More info* > *Run anyway*.
           "@

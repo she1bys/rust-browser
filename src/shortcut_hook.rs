@@ -15,7 +15,7 @@ use webview2_com::{
     },
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VK_CONTROL, VK_F11, VK_HOME, VK_MENU, VK_NUMPAD0, VK_OEM_COMMA, VK_SHIFT, VK_TAB,
+    GetKeyState, VK_CONTROL, VK_F11, VK_F9, VK_HOME, VK_MENU, VK_NUMPAD0, VK_OEM_COMMA, VK_SHIFT, VK_TAB,
 };
 use wry::{WebView, WebViewExtWindows};
 
@@ -29,7 +29,9 @@ pub fn shortcut_for(key: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Shor
     const HOME: u32 = VK_HOME as u32;
     const NUMPAD0: u32 = VK_NUMPAD0 as u32;
     const F11: u32 = VK_F11 as u32;
+    const F9: u32 = VK_F9 as u32;
     match (ctrl, shift, alt, key) {
+        (false, false, false, F9) => Some(Shortcut::Reader),
         (true, false, false, k) if k == 'T' as u32 => Some(Shortcut::NewTab),
         (true, true, false, k) if k == 'N' as u32 => Some(Shortcut::NewPrivateTab),
         (true, true, false, k) if k == 'O' as u32 => Some(Shortcut::Bookmarks),
@@ -126,6 +128,7 @@ mod tests {
         assert_eq!(shortcut_for('O' as u32, true, true, false), Some(Shortcut::Bookmarks));
         assert_eq!(shortcut_for('S' as u32, true, false, false), Some(Shortcut::SavePage));
         assert_eq!(shortcut_for(VK_F11 as u32, false, false, false), Some(Shortcut::Fullscreen));
+        assert_eq!(shortcut_for(VK_F9 as u32, false, false, false), Some(Shortcut::Reader));
         assert_eq!(shortcut_for('F' as u32, false, false, true), Some(Shortcut::Menu));
         assert_eq!(shortcut_for('E' as u32, false, false, true), Some(Shortcut::Menu));
     }

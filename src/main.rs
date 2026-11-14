@@ -1,12 +1,15 @@
 // No console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod adblock;
 mod bookmarks;
 mod browser;
+mod device;
 mod display;
 mod download_hook;
 mod downloads;
 mod history;
+mod import;
 mod ipc;
 mod memory;
 mod menu;
@@ -132,9 +135,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// Cookies, cache, settings and the downloads list live in `%LOCALAPPDATA%\RustBrowser`.
 /// Falls back to WebView2's default (next to the .exe) if that isn't available.
 fn data_dir() -> Option<PathBuf> {
-    let dir = PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("RustBrowser");
+    let dir = match profile_override() {
+        Some(dir) => dir,
+        None => PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("RustBrowser"),
+    };
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
+}
+
+/// A separate profile folder, from the `RUST_BROWSER_PROFILE` environment
+/// variable: used by the automated UI tests (`tests/ui-smoke.ps1`) so they
+/// never touch the real bookmarks, history or open tabs. A browser started
+/// this way also runs as its own instance (see `single_instance.rs`).
+pub(crate) fn profile_override() -> Option<PathBuf> {
+    let dir = PathBuf::from(std::env::var_os("RUST_BROWSER_PROFILE")?);
+    dir.is_absolute().then_some(dir)
 }
 
 #[cfg(windows)]

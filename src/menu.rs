@@ -22,7 +22,7 @@ use windows_sys::Win32::{
     },
 };
 use wry::{
-    MemoryUsageLevel, NewWindowResponse, WebContext, WebView, WebViewBuilder, WebViewBuilderExtWindows,
+    MemoryUsageLevel, NewWindowResponse, PageLoadEvent, WebView, WebViewBuilder, WebViewBuilderExtWindows,
     WebViewExtWindows,
 };
 
@@ -171,13 +171,39 @@ struct MenuPayload<'a> {
     entries: &'a [MenuEntry],
 }
 
+/// After this long without being shown, the popup's web view is closed to
+/// free its engine process; it's created again the next time it's needed.
+const IDLE_RELEASE: Duration = Duration::from_secs(120);
+
+/// How the window appears once its content is ready.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Present {
+    /// As a menu or the memory manager: takes keyboard focus.
+    Menu(MenuKind),
+    /// As a tab's hover card: never takes focus.
+    Card,
+}
+
 // `webview` must drop before `window`.
 //
 // The same small window shows either a menu (it takes keyboard focus) or a
 // tab's hover card (it never does). Only one shows at a time; a menu wins.
+//
+// The web view, and with it a whole engine (renderer) process, only exists
+// while it's in use: it's created the first time something is shown and closed
+// again after `IDLE_RELEASE`. Until the new web view has loaded, what to show
+// waits in `pending` (see `on_ready`).
 pub struct PopupMenu {
-    webview: WebView,
+    webview: Option<WebView>,
     window: Window,
+    /// `webview` has loaded `menu.html` and can render.
+    ready: bool,
+    /// Script to run and how to show the window once the web view is ready.
+    pending: Option<(String, Present)>,
+    environment: ICoreWebView2Environment,
+    webview_theme: wry::Theme,
+    proxy: EventLoopProxy<UserEvent>,
+    last_used: Instant,
     visible: bool,
     kind: Option<MenuKind>,
     closed_at: Instant,
@@ -186,10 +212,10 @@ pub struct PopupMenu {
 }
 
 impl PopupMenu {
+    /// Creates the (hidden) window. Its web view is only created when first needed.
     pub fn new(
         target: &EventLoopWindowTarget<UserEvent>,
         owner: &Window,
-        web_context: &mut WebContext,
         environment: ICoreWebView2Environment,
         window_theme: Option<WindowTheme>,
         webview_theme: wry::Theme,
@@ -207,23 +233,58 @@ impl PopupMenu {
             .build(target)
             .map_err(|_| wry::Error::InitScriptError)?;
 
-        let focus_proxy = proxy.clone();
-        let webview = WebViewBuilder::new_with_web_context(web_context)
-            .with_environment(environment)
+        Ok(Self {
+            webview: None,
+            window,
+            ready: false,
+            pending: None,
+            environment,
+            webview_theme,
+            proxy,
+            last_used: Instant::now(),
+            visible: false,
+            kind: None,
+            closed_at: Instant::now() - Duration::from_secs(10),
+            card: None,
+        })
+    }
+
+    /// Creates the web view if it doesn't exist. It loads in the background
+    /// and reports `UserEvent::MenuReady` when done.
+    fn ensure_webview(&mut self) -> bool {
+        if self.webview.is_some() {
+            return true;
+        }
+        let proxy = self.proxy.clone();
+        let focus_proxy = self.proxy.clone();
+        let ready_proxy = self.proxy.clone();
+        let built = WebViewBuilder::new()
+            .with_environment(self.environment.clone())
             .with_html(MENU_HTML)
-            .with_theme(webview_theme)
+            .with_theme(self.webview_theme)
             .with_ipc_handler(move |request| {
                 if let Ok(msg) = serde_json::from_str::<UiMsg>(request.body()) {
                     let _ = proxy.send_event(UserEvent::Ui(msg));
+                }
+            })
+            .with_on_page_load_handler(move |event, _| {
+                if matches!(event, PageLoadEvent::Finished) {
+                    let _ = ready_proxy.send_event(UserEvent::MenuReady);
                 }
             })
             .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
             .with_drag_drop_handler(|_| true)
             .with_browser_accelerator_keys(false)
             .with_devtools(cfg!(debug_assertions))
-            .build(&window)?;
+            .build(&self.window);
+        let webview = match built {
+            Ok(webview) => webview,
+            Err(e) => {
+                eprintln!("create popup web view: {e}");
+                return false;
+            }
+        };
         let _ = crate::webview_hooks::configure_ui_webview(&webview);
-
         let mut token = 0i64;
         // SAFETY: live WebView2 controller owned by the UI thread; `token` is a valid out-pointer.
         unsafe {
@@ -235,18 +296,80 @@ impl PopupMenu {
                 &mut token,
             );
         }
+        self.webview = Some(webview);
+        self.ready = false;
+        true
+    }
 
-        // Hidden until needed: let the engine keep its memory use low.
-        let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
+    /// The web view finished loading: show whatever was waiting for it.
+    pub fn on_ready(&mut self) {
+        if self.webview.is_none() {
+            return;
+        }
+        self.ready = true;
+        let Some((script, present)) = self.pending.take() else {
+            // Nothing to show any more (it was closed while loading).
+            if let Some(webview) = &self.webview {
+                let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
+            }
+            return;
+        };
+        match present {
+            Present::Menu(kind) if self.visible && self.kind == Some(kind) => {
+                self.eval(&script);
+                self.reveal_menu();
+            }
+            Present::Card if self.card.is_some() && !self.visible => {
+                self.eval(&script);
+                self.reveal_card();
+            }
+            _ => {}
+        }
+    }
 
-        Ok(Self {
-            webview,
-            window,
-            visible: false,
-            kind: None,
-            closed_at: Instant::now() - Duration::from_secs(10),
-            card: None,
-        })
+    /// Runs `script` now if the web view is ready; otherwise keeps it (and how
+    /// to show the window) for `on_ready`. Returns true if it ran now.
+    fn run_or_queue(&mut self, script: String, present: Present) -> bool {
+        self.last_used = Instant::now();
+        if self.ready && self.webview.is_some() {
+            self.eval(&script);
+            return true;
+        }
+        if self.ensure_webview() {
+            self.pending = Some((script, present));
+        }
+        false
+    }
+
+    fn eval(&self, script: &str) {
+        if let Some(webview) = &self.webview {
+            let _ = webview.evaluate_script(script);
+        }
+    }
+
+    /// Closes the web view (freeing its engine process) if it hasn't been
+    /// used for a while. Called every few seconds.
+    pub fn release_if_idle(&mut self) {
+        let idle = !self.visible && self.card.is_none() && self.pending.is_none();
+        if self.webview.is_some() && idle && self.last_used.elapsed() >= IDLE_RELEASE {
+            self.webview = None;
+            self.ready = false;
+        }
+    }
+
+    /// The web view exists (for tests and diagnostics).
+    #[allow(dead_code)]
+    pub fn has_webview(&self) -> bool {
+        self.webview.is_some()
+    }
+
+    fn reveal_card(&self) {
+        if let Some(webview) = &self.webview {
+            let _ = webview.set_memory_usage_level(MemoryUsageLevel::Normal);
+            let _ = webview.set_visible(true);
+        }
+        // SAFETY: a valid window handle owned by this thread.
+        unsafe { ShowWindow(self.window.hwnd() as HWND, SW_SHOWNOACTIVATE) };
     }
 
     /// Shows tab `id`'s hover card below screen point `sx`, `sy`, without
@@ -264,20 +387,24 @@ impl PopupMenu {
             self.window.set_outer_position(PhysicalPosition::new(px, py));
             self.window.set_inner_size(PhysicalSize::new(w as u32, h as u32));
         }
-        let _ = self.webview.evaluate_script(&format!("window.menu && window.menu.renderCard({card_json})"));
-        if self.card.is_none() {
-            let _ = self.webview.set_memory_usage_level(MemoryUsageLevel::Normal);
-            let _ = self.webview.set_visible(true);
-            // SAFETY: a valid window handle owned by this thread.
-            unsafe { ShowWindow(self.window.hwnd() as HWND, SW_SHOWNOACTIVATE) };
-        }
+        let was_showing = self.card.is_some();
         self.card = Some(id);
+        let script = format!("window.menu && window.menu.renderCard({card_json})");
+        if self.run_or_queue(script, Present::Card) && !was_showing {
+            self.reveal_card();
+        }
     }
 
     /// Refreshes the card's contents (e.g. the live memory figure).
-    pub fn update_card(&self, card_json: &str) {
+    pub fn update_card(&mut self, card_json: &str) {
         if self.card.is_some() && !self.visible {
-            let _ = self.webview.evaluate_script(&format!("window.menu && window.menu.renderCard({card_json})"));
+            let script = format!("window.menu && window.menu.renderCard({card_json})");
+            if self.ready {
+                self.last_used = Instant::now();
+                self.eval(&script);
+            } else if let Some((pending, Present::Card)) = &mut self.pending {
+                *pending = script;
+            }
         }
     }
 
@@ -287,9 +414,14 @@ impl PopupMenu {
 
     pub fn hide_card(&mut self) {
         if self.card.take().is_some() && !self.visible {
+            if matches!(self.pending, Some((_, Present::Card))) {
+                self.pending = None;
+            }
             // SAFETY: a valid window handle owned by this thread.
             unsafe { ShowWindow(self.window.hwnd() as HWND, SW_HIDE) };
-            let _ = self.webview.set_memory_usage_level(MemoryUsageLevel::Low);
+            if let Some(webview) = &self.webview {
+                let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
+            }
         }
     }
 
@@ -323,17 +455,26 @@ impl PopupMenu {
         self.closed_at.elapsed() < Duration::from_millis(220)
     }
 
-    pub fn set_theme(&self, theme: Option<WindowTheme>) {
+    /// The window's own theme, and the one a newly created web view starts
+    /// with (the engine's theme is shared with the rest of the browser).
+    pub fn set_theme(&mut self, theme: Option<WindowTheme>, webview_theme: wry::Theme) {
         self.window.set_theme(theme);
+        self.webview_theme = webview_theme;
     }
 
-    pub fn show(&mut self, owner: &Window, kind: MenuKind, sx: i32, sy: i32, align_right: bool, entries: &[MenuEntry]) {
-        // A menu replaces any hover card in the same window.
+    /// A menu replaces any hover card in the same window.
+    fn drop_card_for_menu(&mut self) {
         if self.card.take().is_some() {
+            if matches!(self.pending, Some((_, Present::Card))) {
+                self.pending = None;
+            }
             // SAFETY: a valid window handle owned by this thread.
             unsafe { ShowWindow(self.window.hwnd() as HWND, SW_HIDE) };
         }
-        let _ = self.webview.set_memory_usage_level(MemoryUsageLevel::Normal);
+    }
+
+    pub fn show(&mut self, owner: &Window, kind: MenuKind, sx: i32, sy: i32, align_right: bool, entries: &[MenuEntry]) {
+        self.drop_card_for_menu();
         let width = match kind {
             MenuKind::Main => MAIN_WIDTH,
             MenuKind::Tab(_) => TAB_WIDTH,
@@ -354,50 +495,51 @@ impl PopupMenu {
             MenuKind::Main | MenuKind::Memory => None,
             MenuKind::Tab(id) => Some(id),
         };
-        if let Ok(json) = serde_json::to_string(&MenuPayload { tab_id, entries }) {
-            let _ = self.webview.evaluate_script(&format!("window.menu && window.menu.render({json})"));
-        }
-
-        self.present(kind);
+        let Ok(json) = serde_json::to_string(&MenuPayload { tab_id, entries }) else { return };
+        self.present(kind, format!("window.menu && window.menu.render({json})"));
     }
 
     /// Opens the memory manager below screen point `sx`, `sy` (right-aligned)
     /// with room for `tabs` tab rows. `panel_json` is its first contents.
     pub fn show_memory(&mut self, owner: &Window, sx: i32, sy: i32, tabs: usize, panel_json: &str) {
-        if self.card.take().is_some() {
-            // SAFETY: a valid window handle owned by this thread.
-            unsafe { ShowWindow(self.window.hwnd() as HWND, SW_HIDE) };
-        }
-        let _ = self.webview.set_memory_usage_level(MemoryUsageLevel::Normal);
+        self.drop_card_for_menu();
         let scale = owner.scale_factor();
         let w = (MEMORY_WIDTH * scale).round() as i32;
         let h = (memory_panel_height(tabs) * scale).round() as i32;
         let (px, py) = clamp_position(owner, sx, sy, w, h, true);
         self.window.set_outer_position(PhysicalPosition::new(px, py));
         self.window.set_inner_size(PhysicalSize::new(w as u32, h as u32));
-        let _ = self.webview.evaluate_script(&format!("window.menu && window.menu.renderMemory({panel_json})"));
-        self.present(MenuKind::Memory);
+        self.present(MenuKind::Memory, format!("window.menu && window.menu.renderMemory({panel_json})"));
     }
 
     /// Refreshes the memory manager's figures while it is open.
     pub fn update_memory(&self, panel_json: &str) {
-        if self.visible && self.kind == Some(MenuKind::Memory) {
-            let _ = self.webview.evaluate_script(&format!("window.menu && window.menu.renderMemory({panel_json})"));
+        if self.visible && self.kind == Some(MenuKind::Memory) && self.ready {
+            self.eval(&format!("window.menu && window.menu.renderMemory({panel_json})"));
         }
     }
 
-    /// Shows the window with keyboard focus, as a menu.
-    fn present(&mut self, kind: MenuKind) {
-        let _ = self.webview.set_visible(true);
-        self.window.set_visible(true);
-        self.window.set_focus();
-        let _ = self.webview.focus();
+    /// Renders `script` and shows the window with keyboard focus, as a menu
+    /// (once the web view is ready, if it was just created).
+    fn present(&mut self, kind: MenuKind, script: String) {
         self.visible = true;
         self.kind = Some(kind);
+        if self.run_or_queue(script, Present::Menu(kind)) {
+            self.reveal_menu();
+        }
+    }
+
+    fn reveal_menu(&self) {
+        let Some(webview) = &self.webview else { return };
+        let _ = webview.set_memory_usage_level(MemoryUsageLevel::Normal);
+        let _ = webview.set_visible(true);
+        self.window.set_visible(true);
+        self.window.set_focus();
+        let _ = webview.focus();
     }
 
     pub fn update_entries(&self, entries: &[MenuEntry]) {
-        if !self.visible {
+        if !self.visible || !self.ready {
             return;
         }
         let tab_id = match self.kind {
@@ -405,7 +547,7 @@ impl PopupMenu {
             _ => None,
         };
         if let Ok(json) = serde_json::to_string(&MenuPayload { tab_id, entries }) {
-            let _ = self.webview.evaluate_script(&format!("window.menu && window.menu.render({json})"));
+            self.eval(&format!("window.menu && window.menu.render({json})"));
         }
     }
 
@@ -413,13 +555,19 @@ impl PopupMenu {
     pub fn hide(&mut self) {
         self.hide_card();
         if self.visible {
+            if matches!(self.pending, Some((_, Present::Menu(_)))) {
+                self.pending = None;
+            }
             self.window.set_visible(false);
             // Stops the memory manager's once-a-second refresh, if it was open.
-            let _ = self.webview.evaluate_script("window.menu && window.menu.onHide && window.menu.onHide()");
+            self.eval("window.menu && window.menu.onHide && window.menu.onHide()");
             self.visible = false;
             self.kind = None;
             self.closed_at = Instant::now();
-            let _ = self.webview.set_memory_usage_level(MemoryUsageLevel::Low);
+            self.last_used = Instant::now();
+            if let Some(webview) = &self.webview {
+                let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
+            }
         }
     }
 }

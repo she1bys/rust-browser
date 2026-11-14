@@ -42,12 +42,15 @@ pub struct NewTabState {
     pub search_prefix: String,
     pub quick: Vec<NewTabLink>,
     pub recent: Vec<NewTabLink>,
+    /// Efficiency mode: a plain page without shadows, glows or motion.
+    pub lite: bool,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NewTabPayload<'a> {
     private: bool,
+    lite: bool,
     engine_name: &'a str,
     search_prefix: &'a str,
     quick: &'a [NewTabLink],
@@ -56,7 +59,7 @@ struct NewTabPayload<'a> {
 
 impl NewTabState {
     /// Builds a sanitized New Tab snapshot from user settings, bookmarks, and history.
-    pub fn from_sources(settings: &Settings, bookmarks: &Bookmarks, history: &History) -> Self {
+    pub fn from_sources(settings: &Settings, bookmarks: &Bookmarks, history: &History, lite: bool) -> Self {
         let mut seen = HashSet::new();
         let mut quick = Vec::with_capacity(MAX_QUICK_LINKS);
 
@@ -115,6 +118,7 @@ impl NewTabState {
             search_prefix: settings.search_engine.search_prefix().to_string(),
             quick,
             recent,
+            lite,
         }
     }
 }
@@ -206,6 +210,7 @@ fn serialized_payload(state: &NewTabState, private: bool) -> String {
     let payload = if private {
         NewTabPayload {
             private: true,
+            lite: state.lite,
             engine_name: &state.engine_name,
             search_prefix: &state.search_prefix,
             quick: &[],
@@ -214,6 +219,7 @@ fn serialized_payload(state: &NewTabState, private: bool) -> String {
     } else {
         NewTabPayload {
             private: false,
+            lite: state.lite,
             engine_name: &state.engine_name,
             search_prefix: &state.search_prefix,
             quick: &state.quick,
@@ -319,8 +325,10 @@ mod tests {
         history.record("https://docs.rs/", "Docs.rs");
         history.record("file:///C:/secret.txt", "Secret");
 
-        let state = NewTabState::from_sources(&settings, &bookmarks, &history);
+        let state = NewTabState::from_sources(&settings, &bookmarks, &history, false);
         assert_eq!(state.engine_name, "DuckDuckGo");
+        assert!(!state.lite);
+        assert!(render_html(&NewTabState { lite: true, ..state.clone() }, false).contains("\"lite\":true"));
         assert_eq!(state.quick.len(), 2);
         assert_eq!(state.quick[0].url, "https://rust-lang.org/");
         assert!(state.quick[0].bookmarked);
@@ -340,6 +348,7 @@ mod tests {
                 bookmarked: true,
             }],
             recent: vec![],
+            lite: false,
         };
 
         let normal = render_html(&state, false);
@@ -358,6 +367,7 @@ mod tests {
             search_prefix: "https://www.google.com/search?q=".into(),
             quick: vec![NewTabLink { url: "https://example.com/".into(), title: "Example".into(), bookmarked: false }],
             recent: vec![],
+            lite: false,
         });
 
         let ok = handle_request(&state, Request::get("rbnewtab://localhost/").body(Vec::new()).unwrap());

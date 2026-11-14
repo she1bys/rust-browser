@@ -16,6 +16,10 @@
 #define AppName "Rust Browser"
 #define AppExeName "rust-browser.exe"
 #define SourceExe "..\target\release\rust-browser.exe"
+; The native build for ARM laptops (Snapdragon, Copilot+), if it was built:
+;   cargo build --release --target aarch64-pc-windows-msvc
+; With it, one installer installs the right version on either kind of PC.
+#define SourceExeArm64 "..\target\aarch64-pc-windows-msvc\release\rust-browser.exe"
 #ifndef AppVersion
   #define AppVersion GetStringFileInfo(SourceExe, "ProductVersion")
 #endif
@@ -41,8 +45,13 @@ DisableProgramGroupPage=yes
 ; Per-user install by default; the user may choose "all users" (needs admin).
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
+#if FileExists(SourceExeArm64)
+ArchitecturesAllowed=x64compatible or arm64
+ArchitecturesInstallIn64BitMode=x64compatible or arm64
+#else
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 MinVersion=10.0
 LicenseFile=..\LICENSE
 SetupIconFile=..\assets\icon.ico
@@ -69,7 +78,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
+#if FileExists(SourceExeArm64)
+; ARM PCs get the native ARM build; everything else the x64 one.
+Source: "{#SourceExeArm64}"; DestDir: "{app}"; Flags: ignoreversion; Check: IsArm64
+Source: "{#SourceExe}"; DestDir: "{app}"; Flags: ignoreversion; Check: not IsArm64
+#else
 Source: "{#SourceExe}"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]

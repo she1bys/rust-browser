@@ -49,6 +49,18 @@ impl Bookmarks {
         }
     }
 
+    /// Adds bookmarks brought in from another browser, after the existing
+    /// ones, skipping any already here. Returns how many were added.
+    pub fn import(&mut self, bookmarks: Vec<Bookmark>) -> usize {
+        let before = self.items.len();
+        for bookmark in bookmarks {
+            if !bookmark.url.is_empty() && !self.contains(&bookmark.url) {
+                self.items.push(bookmark);
+            }
+        }
+        self.items.len() - before
+    }
+
     pub fn remove(&mut self, url: &str) -> bool {
         let before = self.items.len();
         self.items.retain(|b| b.url != url);

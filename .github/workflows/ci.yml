@@ -24,7 +24,7 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt --target aarch64-pc-windows-msvc
           rustup default stable
 
       - uses: Swatinem/rust-cache@v2
@@ -40,3 +40,6 @@ jobs:
 
       - name: Build release
         run: cargo build --release
+
+      - name: Build for ARM64
+        run: cargo build --release --target aarch64-pc-windows-msvc

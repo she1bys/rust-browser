@@ -23,6 +23,14 @@ Open an [issue](https://github.com/she1bys/rust-browser/issues) with:
    cargo test
    ```
 
+   For changes to the browser's behaviour or UI, also run the click-through test
+   (see "Testing" in the README):
+
+   ```bash
+   cargo build --release
+   powershell -ExecutionPolicy Bypass -File tests\ui-smoke.ps1
+   ```
+
 4. Push to your fork and open a pull request describing what changed and why.
 
 ## Guidelines

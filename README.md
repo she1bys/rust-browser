@@ -10,7 +10,7 @@ sites work the way they do in Edge or Chrome.
 
 ### [⬇ Download Rust Browser for Windows](https://github.com/she1bys/rust-browser/releases/latest/download/RustBrowser-Setup.exe)
 
-Windows 10 and 11, 64-bit · about 2.5 MB · [all versions and the portable .exe](https://github.com/she1bys/rust-browser/releases)
+Windows 10 and 11 · regular (x64) and ARM PCs · about 3 MB · [all versions and the portable .exe](https://github.com/she1bys/rust-browser/releases)
 
 1. Click the link above to download the installer (always the newest version).
 2. Run it. No administrator rights are needed: it installs for your Windows account, adds a Start menu shortcut, and installs the Microsoft Edge WebView2 Runtime if your PC doesn't have it yet (Windows 10 and 11 usually do).
@@ -30,13 +30,19 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
 - Tabs: open, close, switch, smooth drag-to-reorder, middle-click to close, reopen closed tabs (`Ctrl+Shift+T`), favicons, links that ask for a new window open in a new tab (while sized popups like OAuth logins keep their opener)
 - Split View: view two tabs side-by-side from the toolbar split button, the 3-dot menu, or the tab right-click menu ("Split with current tab"), with a toolbar swap button and automatic pane-focus tracking
 - Memory saver (Settings > Performance: Off / Balanced / Maximum): tabs out of sight are first frozen (scripts pause, nothing is lost), then put to sleep (the page is unloaded and all its memory freed; it reloads when opened, shown faded in the tab strip). Tabs on screen, playing sound, downloading, or private are never put to sleep. Background tabs and a minimized window also ask the engine to use less memory. Measured with five websites open: 318 MB before, 194 MB after one minute, 165 MB once background tabs sleep
+- Ad and tracker blocker (on by default; Settings > Privacy > "Block ads and trackers"): requests to known advertising, tracking and data-broker domains are answered by the browser itself and never downloaded, so pages load faster and use less memory. A shield in the address bar shows how many were blocked on the page. A site is never blocked on its own pages. The domain list is built in (`src/adblock.rs`) and WebView2 matches it natively, so ordinary requests pay nothing
+- Reader mode (book button in the address bar, the menu, or `F9`): shows the page's article as clean text, with larger/smaller text and light, sepia or dark backgrounds; `Esc` closes it
+- Import from Chrome, Edge or Brave (menu > "Import from Chrome or Edge…", or Settings > Import): copies bookmarks and recent history; nothing in the other browser changes. Saved passwords can't be imported (WebView2 has no way to add them)
+- Efficiency mode (Settings > Performance: Auto / On / Off): the strongest memory saver plus no animations or blur effects. Auto turns it on for PCs with 4 GB of memory or less, or two processor threads
+- Light start-up: the window used for menus, the tab hover card and the memory manager only starts its engine process when first needed, and closes it again after two idle minutes (measured: about 33 MB and one process less at start-up)
+- New Tab page: large clock and greeting, search box, shortcut tiles for bookmarks and most visited sites, and "Continue browsing" with recent pages; a plain version in efficiency mode
 - Memory button (next to split view): shows the browser's total memory use, live. Click it for the memory manager: the total split into tabs and the browser itself, every tab with its memory and state (on screen, running, frozen, sleeping), a Sleep button per tab, the Memory saver switch, and "Free up memory" to put all background tabs to sleep at once (tabs playing sound and private tabs stay)
 - Many tabs: tabs never get narrower than their icon plus close button; with more tabs than fit, the tab strip scrolls with the mouse wheel and fades at the edge that has more
 - Tab hover card: rest the mouse on a tab to see its page's live memory use (updated every second, the same figure as Task Manager), and whether it is shared with other tabs, frozen or sleeping
 - Smooth on high-refresh-rate screens: pages animate at the monitor's own rate (measured 165 frames per second on a 164 Hz monitor, using under 1% of one processor core). The engine's own frame pacing and power saving are left on, which is what keeps it smooth without heat or battery drain. The detected refresh rate is shown in Settings > About
 - Address bar that accepts URLs, bare domains, local/UNC file paths, or a search, with autocomplete suggestions from bookmarks and history
 - Bookmarks and History panels with live search (`Ctrl+F` focuses the search box in Bookmarks, History, and Downloads), plus a bookmark star button (`Ctrl+D`)
-- Main menu (⋮, or `Alt+F`): new tab, new private tab, reopen closed tab, split view / swap panes, bookmarks, history, downloads, zoom in/out/reset, full screen, find on page, print, save page as, developer tools, settings, exit
+- Main menu (⋮, or `Alt+F`): new tab, new private tab, reopen closed tab, split view / swap panes, bookmarks, history, downloads, zoom in/out/reset, full screen, find on page, reader mode, print, save page as, developer tools, import, settings, exit
 - Tab right-click menu: new tab to the right, split with current tab / swap or close split panes, reload, duplicate, mute, close, close other tabs, close tabs to the right, reopen closed tab
 - Private tabs (`Ctrl+Shift+N`): WebView2 InPrivate mode, marked in purple; they leave no history, saved tabs, cookies or download records
 - Pop-up blocker: windows a page opens without a click are blocked, with an "Open" button to allow one anyway
@@ -72,6 +78,7 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
 | Ctrl+Shift+T | Reopen last closed tab |
 | Alt+F or Alt+E | Open the main menu |
 | F11 | Full screen |
+| F9 | Reader mode |
 | Ctrl+Shift+O | Open or close Bookmarks |
 | Ctrl+Shift+B | Show or hide bookmarks bar |
 | Ctrl+S | Save page as |
@@ -144,12 +151,36 @@ Open a specific page or search at startup:
 cargo run -- rust-lang.org
 ```
 
+Build for ARM PCs too (needs the "MSVC ARM64 build tools" component of Visual Studio Build Tools); the installer then includes both and installs the right one:
+
+```bash
+rustup target add aarch64-pc-windows-msvc
+```
+
+```bash
+cargo build --release --target aarch64-pc-windows-msvc
+```
+
 Build the installer (needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); output in `target\installer`):
 
 ```bash
 cargo build --release
 iscc installer\rust-browser.iss
 ```
+
+## Testing
+
+`cargo test` runs the unit tests. `tests\ui-smoke.ps1` clicks through the real app like a person would (menus, Settings, the ad blocker, reader mode, bookmarks, split view, the memory manager, tabs, closing) using Windows UI Automation, so it needs no mouse or keyboard and runs in the background. It uses its own temporary profile and a local test site (`tests\site`), so it never touches your browser data or the internet:
+
+```bash
+cargo build --release
+```
+
+```bash
+powershell -ExecutionPolicy Bypass -File tests\ui-smoke.ps1
+```
+
+Add `-Long` to also check that the idle popup engine process is released after two minutes.
 
 ## Releases
 
@@ -187,6 +218,12 @@ src/menu.rs            borderless floating popup menus: the main menu and tab ri
 src/single_instance.rs named-pipe forwarding to an already-running instance
 src/url_input.rs       address bar text -> URL or search
 src/updater.rs         update check (GitHub releases), installer download + SHA-256 check, silent install
+src/adblock.rs         the ad and tracker blocklist and matching
+src/import.rs          bookmarks and history from Chrome, Edge and Brave (Windows' built-in SQLite)
+src/device.rs          installed memory and processors, for efficiency mode
+ui/reader.js           reader mode, run inside the page
+ui/newtab.html         the New Tab page
+tests/ui-smoke.ps1     automated click-through test of the real app (see Testing)
 ui/index.html          the browser UI: tab strip, toolbar, and panels
 ui/menu.html           popup menu UI (icons, zoom bar, keyboard navigation)
 ```

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::import::{Imported, Source as ImportSource};
 use crate::settings::SettingsPatch;
 use crate::updater::Release;
 
@@ -70,6 +71,10 @@ pub enum Command {
     ResetZoom,
     /// F11: the page fills the whole screen.
     Fullscreen,
+    /// F9: show the page's article as clean, readable text.
+    ReaderMode,
+    /// Bring in bookmarks and history from Chrome or Edge.
+    ImportData,
     Find,
     Print,
     SavePage,
@@ -230,6 +235,10 @@ pub enum UiMsg {
     },
     /// "Check for updates" in Settings > About.
     CheckForUpdates,
+    /// Settings > Import: bring in bookmarks and history from another browser.
+    ImportFrom {
+        source: ImportSource,
+    },
     /// The Update button: download the new version and install it.
     InstallUpdate,
 }
@@ -277,6 +286,8 @@ pub enum Shortcut {
     ToggleBookmarksBar,
     /// F11.
     Fullscreen,
+    /// F9: reader mode.
+    Reader,
     /// Ctrl+S.
     SavePage,
     /// Alt+F or Alt+E: open the main menu.
@@ -362,6 +373,15 @@ pub enum UserEvent {
     TabFocused(TabId),
     /// Focus left the popup menu WebView2 controller.
     MenuLostFocus,
+    /// The popup's web view (created on first use) finished loading.
+    MenuReady,
+    /// The ad blocker blocked more requests in this tab.
+    AdsBlocked(TabId),
+    /// What reader mode did in tab `id`: "opened", "closed" or "none".
+    ReaderResult {
+        id: TabId,
+        result: String,
+    },
     /// Opening the find bar through the WebView2 API didn't work.
     FindFailed(TabId),
     /// Every few seconds: lets the memory saver freeze or put tabs to sleep.
@@ -371,6 +391,11 @@ pub enum UserEvent {
     /// Another `rust-browser.exe` launch forwarded its optional target URL/search.
     ExternalOpen(Option<String>),
     Update(UpdateEvent),
+    /// Bookmarks and history read from another browser (or why not).
+    Imported {
+        source: ImportSource,
+        result: Result<Imported, String>,
+    },
     DownloadStarted {
         id: DownloadId,
         tab: TabId,
@@ -524,6 +549,13 @@ mod tests {
         assert_eq!(m, UiMsg::NoticeAction { id: 7 });
         assert_eq!(serde_json::from_str::<UiMsg>(r#"{"type":"checkForUpdates"}"#).unwrap(), UiMsg::CheckForUpdates);
         assert_eq!(serde_json::from_str::<UiMsg>(r#"{"type":"installUpdate"}"#).unwrap(), UiMsg::InstallUpdate);
+        assert_eq!(
+            serde_json::from_str::<UiMsg>(r#"{"type":"importFrom","source":"edge"}"#).unwrap(),
+            UiMsg::ImportFrom { source: ImportSource::Edge }
+        );
+        assert!(serde_json::from_str::<UiMsg>(r#"{"type":"importFrom","source":"netscape"}"#).is_err());
+        let m: UiMsg = serde_json::from_str(r#"{"type":"command","command":"readerMode"}"#).unwrap();
+        assert_eq!(m, UiMsg::Command { command: Command::ReaderMode });
         assert!(serde_json::from_str::<UiMsg>(r#"{"type":"command","command":"formatDisk"}"#).is_err());
     }
 
