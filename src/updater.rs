@@ -430,7 +430,8 @@ mod http {
             }
             match query_number(&request, WINHTTP_QUERY_STATUS_CODE) {
                 Some(200) => {}
-                Some(404) => return Err("no release was found".into()),
+                // Also what GitHub answers while the project is unavailable to the public.
+                Some(404) => return Err("the update page on GitHub isn't available right now. Try again later".into()),
                 Some(403 | 429) => return Err("GitHub asked to wait a while before checking again".into()),
                 Some(code) => return Err(format!("the update server answered with error {code}")),
                 None => return Err(last_error("the update server's answer was unreadable")),
