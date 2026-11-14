@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --surface: #f8f9fb;
+    --text: #1f2328;
+    --muted: #656d76;
+    --border: #d0d7de;
+    --accent: #2563eb;
+    --hover: rgba(0, 0, 0, 0.06);
+    --press: rgba(0, 0, 0, 0.11);
+    --pill: rgba(0, 0, 0, 0.045);
+    --danger: #c62828;
+    --fast: 0.1s;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #25282e;
+      --text: #e7e9ec;
+      --muted: #939ca6;
+      --border: #3a3f47;
+      --accent: #7aa7ff;
+      --hover: rgba(255, 255, 255, 0.08);
+      --press: rgba(255, 255, 255, 0.14);
+      --pill: rgba(255, 255, 255, 0.06);
+      --danger: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: var(--surface);
+    color: var(--text);
+    font: 13px/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    user-select: none;
+    cursor: default;
+  }
+  #menu {
+    min-height: 100%;
+    padding: 5px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .sep {
+    height: 1px;
+    margin: 4px 8px;
+    background: var(--border);
+    opacity: 0.65;
+  }
+  .item {
+    width: 100%;
+    height: 32px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    outline: none;
+    transition: background-color var(--fast) ease;
+  }
+  .item:hover:not(:disabled),
+  .item:focus-visible:not(:disabled) {
+    background: var(--hover);
+  }
+  .item:active:not(:disabled) {
+    background: var(--press);
+  }
+  .item:disabled {
+    opacity: 0.4;
+  }
+  .item.danger:hover:not(:disabled) {
+    color: var(--danger);
+  }
+  .item svg, .zoom-row svg {
+    width: 15px;
+    height: 15px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    color: var(--muted);
+  }
+  .item:hover:not(:disabled) svg { color: inherit; }
+  .item.checked svg { color: var(--accent); stroke-width: 2.2; }
+  .item-label { flex: 1; white-space: nowrap; }
+  .item-key {
+    flex: none;
+    font-size: 11.5px;
+    color: var(--muted);
+    letter-spacing: 0.01em;
+  }
+
+  /* Inline Zoom + Fullscreen control row */
+  .zoom-row {
+    height: 36px;
+    padding: 0 6px 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .zoom-title {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .zoom-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 7px;
+    background: var(--pill);
+  }
+  .z-btn {
+    height: 24px;
+    min-width: 26px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    display: grid;
+    place-items: center;
+    outline: none;
+    transition: background-color var(--fast) ease;
+  }
+  .z-btn:hover:not(:disabled),
+  .z-btn:focus-visible:not(:disabled) { background: var(--hover); }
+  .z-btn:active:not(:disabled) { background: var(--press); }
+  .z-btn:disabled { opacity: 0.35; }
+  .z-btn.pct {
+    min-width: 44px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .z-btn.pct.modified { color: var(--accent); }
+  .z-btn.fs { margin-left: 2px; }
+  .z-btn.fs.on { background: var(--hover); color: var(--accent); }
+  .z-btn svg { width: 14px; height: 14px; color: inherit; }
+
+  /* ---- tab hover card (290 x 124, see CARD_WIDTH/CARD_HEIGHT in menu.rs) ---- */
+  #card {
+    height: 124px;
+    padding: 12px 14px 11px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    animation: card-in 0.12s ease-out;
+  }
+  @keyframes card-in { from { opacity: 0; transform: translateY(-3px); } }
+  .card-title {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .card-site {
+    margin-top: 3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .card-site span:last-child { overflow: hidden; text-overflow: ellipsis; }
+  .card-private {
+    flex: none;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: #7c3aed;
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 600;
+  }
+  .card-mem {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-mem svg {
+    width: 15px;
+    height: 15px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    color: var(--muted);
+  }
+  .card-mem-label { flex: 1; color: var(--muted); }
+  .card-mem-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .card-bar {
+    height: 4px;
+    margin-top: 6px;
+    border-radius: 2px;
+    background: var(--pill);
+    overflow: hidden;
+  }
+  .card-bar div {
+    height: 100%;
+    width: 0;
+    border-radius: 2px;
+    background: var(--accent);
+    transition: width 0.4s ease, background-color 0.4s ease;
+  }
+  .card-bar.medium div { background: #d97706; }
+  .card-bar.high div { background: var(--danger); }
+  .card-note {
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 11.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #card.sleeping .card-mem-value, #card.internal .card-mem-value { color: var(--muted); }
+
+  /* ---- memory manager (MEMORY_WIDTH x memory_panel_height in menu.rs) ---- */
+  #mem {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+  }
+  .mem-head { padding: 14px 16px 12px; }
+  .mem-total { display: flex; align-items: baseline; gap: 8px; }
+  #mem-total { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .mem-total-label { color: var(--muted); }
+  .mem-meter { display: flex; height: 6px; margin-top: 10px; border-radius: 3px; background: var(--pill); overflow: hidden; }
+  .mem-meter div { height: 100%; transition: width 0.4s ease; }
+  #mem-meter-tabs { background: var(--accent); }
+  #mem-meter-browser { background: var(--muted); opacity: 0.45; }
+  .mem-legend { display: flex; gap: 14px; margin-top: 7px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .mem-legend span::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 5px;
+    border-radius: 50%;
+    vertical-align: 0.5px;
+  }
+  #mem-legend-tabs::before { background: var(--accent); }
+  #mem-legend-browser::before { background: var(--muted); opacity: 0.6; }
+  #mem-legend-procs::before { display: none; }
+  .mem-saver {
+    height: 44px;
+    padding: 0 12px 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--border);
+  }
+  .seg { display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--pill); }
+  .seg button {
+    height: 24px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    outline: none;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-checked="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+  .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .mem-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px; border-top: 1px solid var(--border); }
+  .mem-row {
+    height: 46px;
+    padding: 0 6px 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-radius: 6px;
+    transition: background-color var(--fast) ease;
+  }
+  .mem-row:hover { background: var(--hover); }
+  .mem-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); opacity: 0.5; }
+  .mem-row.visible .mem-dot { background: var(--accent); opacity: 1; }
+  .mem-row.awake .mem-dot { background: #16a34a; opacity: 1; }
+  .mem-row.frozen .mem-dot { background: #0ea5e9; opacity: 1; }
+  .mem-info { flex: 1; min-width: 0; }
+  .mem-title, .mem-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mem-title { font-size: 12.5px; font-weight: 600; }
+  .mem-sub { margin-top: 2px; color: var(--muted); font-size: 11.5px; }
+  .mem-value { flex: none; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .mem-row.sleeping .mem-value, .mem-row.internal .mem-value { color: var(--muted); font-weight: 400; }
+  .mem-sleep {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    display: grid;
+    place-items: center;
+    outline: none;
+  }
+  .mem-sleep:hover:not(:disabled) { background: var(--press); color: var(--text); }
+  .mem-sleep:focus-visible { outline: 2px solid var(--accent); }
+  .mem-sleep:disabled { visibility: hidden; }
+  .mem-sleep svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .mem-foot { height: 56px; padding: 0 12px; display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--border); }
+  #mem-free {
+    flex: none;
+    height: 32px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 7px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
+    outline: none;
+  }
+  #mem-free:hover:not(:disabled) { filter: brightness(1.08); }
+  #mem-free:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  #mem-free:disabled { opacity: 0.45; }
+  #mem-free-hint { flex: 1; color: var(--muted); font-size: 11.5px; line-height: 1.3; }
+  @media (prefers-color-scheme: dark) { #mem-free { color: #10131a; } }
+</style>
+</head>
+<body>
+  <div id="menu" role="menu"></div>
+  <div id="card" role="tooltip" hidden>
+    <div class="card-title" id="card-title"></div>
+    <div class="card-site"><span class="card-private" id="card-private" hidden>Private</span><span id="card-site"></span></div>
+    <div class="card-mem">
+      <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+      <span class="card-mem-label">Memory usage</span>
+      <span class="card-mem-value" id="card-value"></span>
+    </div>
+    <div class="card-bar" id="card-bar"><div id="card-fill"></div></div>
+    <div class="card-note" id="card-note"></div>
+  </div>
+  <div id="mem" role="dialog" aria-label="Memory" hidden>
+    <div class="mem-head">
+      <div class="mem-total"><span id="mem-total"></span><span class="mem-total-label">used by Rust Browser</span></div>
+      <div class="mem-meter"><div id="mem-meter-tabs"></div><div id="mem-meter-browser"></div></div>
+      <div class="mem-legend"><span id="mem-legend-tabs"></span><span id="mem-legend-browser"></span><span id="mem-legend-procs"></span></div>
+    </div>
+    <div class="mem-saver">
+      <span>Memory saver</span>
+      <div class="seg" id="mem-saver" role="radiogroup" aria-label="Memory saver"></div>
+    </div>
+    <div class="mem-list" id="mem-list"></div>
+    <div class="mem-foot">
+      <button id="mem-free">Free up memory</button>
+      <span id="mem-free-hint"></span>
+    </div>
+  </div>
+<script>
+(() => {
+  'use strict';
+
+  const ICONS = {
+    newTab: '<path d="M12 5v14M5 12h14"/>',
+    privateTab: '<path d="M4 11h16"/><path d="M6.5 11 8 5.5h8L17.5 11"/><circle cx="8.5" cy="15.5" r="2.5"/><circle cx="15.5" cy="15.5" r="2.5"/><path d="M11 15.5h2"/>',
+    reopen: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+    bookmark: '<path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8l-5.8 3.1 1.1-6.5L2.6 9.8l6.5-.9z"/>',
+    bookmarks: '<path d="M6 4h12v17l-6-4-6 4z"/>',
+    history: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    downloads: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+    zoom: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/>',
+    fullscreen: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+    find: '<circle cx="10.5" cy="10.5" r="6"/><path d="m19.5 19.5-4.3-4.3"/>',
+    print: '<path d="M6 9V4h12v5M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="6"/>',
+    save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
+    devtools: '<path d="m8 9-3 3 3 3M16 9l3 3-3 3M13.5 6l-3 12"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>',
+    exit: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+    reload: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+    duplicate: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+    split: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
+    swap: '<path d="M4 9h16m0 0-3-3m3 3-3 3M20 15H4m0 0 3-3m-3 3 3 3"/>',
+    mute: '<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
+    unmute: '<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+    close: '<path d="M6 6l12 12M18 6L6 18"/>',
+    check: '<path d="M5 12.5 9.5 17 19 7"/>',
+    minus: '<path d="M5 12h14"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+  };
+
+  const $menu = document.getElementById('menu');
+  const send = (msg) => window.ipc.postMessage(JSON.stringify(msg));
+
+  function icon(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.innerHTML = ICONS[name] || '';
+    return svg;
+  }
+
+  function makeItem(spec, onClick) {
+    const btn = document.createElement('button');
+    const isToggle = typeof spec.checked === 'boolean';
+    btn.className = 'item' + (spec.danger ? ' danger' : '') + (spec.checked ? ' checked' : '');
+    btn.setAttribute('role', isToggle ? 'menuitemcheckbox' : 'menuitem');
+    if (isToggle) btn.setAttribute('aria-checked', String(spec.checked));
+    btn.disabled = spec.enabled === false;
+    btn.append(icon(spec.icon));
+    const label = document.createElement('span');
+    label.className = 'item-label';
+    label.textContent = spec.label;
+    btn.append(label);
+    if (spec.shortcut) {
+      const key = document.createElement('span');
+      key.className = 'item-key';
+      key.textContent = spec.shortcut;
+      btn.append(key);
+    }
+    btn.addEventListener('click', () => onClick());
+    return btn;
+  }
+
+  function makeZoomRow(z) {
+    const row = document.createElement('div');
+    row.className = 'zoom-row';
+    const title = document.createElement('div');
+    title.className = 'zoom-title';
+    title.append(icon('zoom'));
+    const lbl = document.createElement('span');
+    lbl.textContent = 'Zoom';
+    title.append(lbl);
+
+    const group = document.createElement('div');
+    group.className = 'zoom-group';
+
+    const outBtn = document.createElement('button');
+    outBtn.className = 'z-btn';
+    outBtn.dataset.focusKey = 'zoomOut';
+    outBtn.title = 'Zoom out (Ctrl+-)';
+    outBtn.disabled = !z.canOut;
+    outBtn.append(icon('minus'));
+    outBtn.addEventListener('click', () => send({ type: 'menuCommand', command: 'zoomOut', close: false }));
+
+    const pctBtn = document.createElement('button');
+    pctBtn.className = 'z-btn pct' + (z.percent !== 100 ? ' modified' : '');
+    pctBtn.dataset.focusKey = 'resetZoom';
+    pctBtn.title = 'Reset zoom (Ctrl+0)';
+    pctBtn.disabled = !z.hasView || z.percent === 100;
+    pctBtn.textContent = z.percent + '%';
+    pctBtn.addEventListener('click', () => send({ type: 'menuCommand', command: 'resetZoom', close: false }));
+
+    const inBtn = document.createElement('button');
+    inBtn.className = 'z-btn';
+    inBtn.dataset.focusKey = 'zoomIn';
+    inBtn.title = 'Zoom in (Ctrl++)';
+    inBtn.disabled = !z.canIn;
+    inBtn.append(icon('plus'));
+    inBtn.addEventListener('click', () => send({ type: 'menuCommand', command: 'zoomIn', close: false }));
+
+    group.append(outBtn, pctBtn, inBtn);
+
+    const fsBtn = document.createElement('button');
+    fsBtn.className = 'z-btn fs' + (z.fullscreen ? ' on' : '');
+    fsBtn.dataset.focusKey = 'fullscreen';
+    fsBtn.title = z.fullscreen ? 'Exit full screen (F11)' : 'Full screen (F11)';
+    fsBtn.append(icon('fullscreen'));
+    fsBtn.addEventListener('click', () => send({ type: 'menuCommand', command: 'fullscreen', close: true }));
+
+    row.append(title, group, fsBtn);
+    return row;
+  }
+
+  // ---- tab hover card ------------------------------------------------------
+
+  function formatMemory(bytes) {
+    if (!(bytes > 0)) return '0 MB';
+    const mb = bytes / (1024 * 1024);
+    if (mb >= 1024) return (mb / 1024).toFixed(2) + ' GB';
+    if (mb >= 100) return Math.round(mb) + ' MB';
+    return mb.toFixed(1) + ' MB';
+  }
+
+  // ---- memory manager ------------------------------------------------------
+
+  const $mem = document.getElementById('mem');
+  const $memList = document.getElementById('mem-list');
+  let memPoll = null;
+  const MOON = '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>';
+  const STATE_TEXT = {
+    visible: 'On screen',
+    awake: 'Running in the background',
+    frozen: 'Frozen',
+    sleeping: 'Sleeping',
+    internal: 'Part of the browser',
+  };
+
+  // The memory saver switch, built once.
+  const $saver = document.getElementById('mem-saver');
+  for (const [value, label] of [['off', 'Off'], ['balanced', 'Balanced'], ['maximum', 'Maximum']]) {
+    const b = document.createElement('button');
+    b.setAttribute('role', 'radio');
+    b.dataset.value = value;
+    b.textContent = label;
+    b.addEventListener('click', () => send({ type: 'updateSettings', patch: { memorySaver: value } }));
+    $saver.append(b);
+  }
+  document.getElementById('mem-free').addEventListener('click', () => send({ type: 'sleepBackgroundTabs' }));
+
+  function memRow(id) {
+    const row = document.createElement('div');
+    row.className = 'mem-row';
+    row.dataset.id = String(id);
+    row.title = 'Switch to this tab';
+    const dot = document.createElement('span');
+    dot.className = 'mem-dot';
+    const info = document.createElement('div');
+    info.className = 'mem-info';
+    const title = document.createElement('div');
+    title.className = 'mem-title';
+    const sub = document.createElement('div');
+    sub.className = 'mem-sub';
+    info.append(title, sub);
+    const value = document.createElement('span');
+    value.className = 'mem-value';
+    const sleep = document.createElement('button');
+    sleep.className = 'mem-sleep';
+    sleep.title = 'Put to sleep (frees its memory)';
+    sleep.setAttribute('aria-label', 'Put to sleep');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.innerHTML = MOON; // static markup
+    sleep.append(svg);
+    sleep.addEventListener('click', (e) => {
+      e.stopPropagation();
+      send({ type: 'sleepTab', id });
+    });
+    row.addEventListener('click', () => {
+      send({ type: 'selectTab', id, focus: true });
+      send({ type: 'closeMenu' });
+    });
+    row.append(dot, info, value, sleep);
+    return row;
+  }
+
+  // Called by Rust when the manager opens and about once a second after.
+  // All text goes in through textContent: titles come from web pages.
+  function renderMemory(v) {
+    $menu.hidden = true;
+    document.getElementById('card').hidden = true;
+    $mem.hidden = false;
+
+    const browserBytes = Math.max(0, v.total - v.tabsTotal);
+    document.getElementById('mem-total').textContent = formatMemory(v.total);
+    document.getElementById('mem-legend-tabs').textContent = 'Tabs ' + formatMemory(v.tabsTotal);
+    document.getElementById('mem-legend-browser').textContent = 'Browser ' + formatMemory(browserBytes);
+    document.getElementById('mem-legend-procs').textContent = v.processes + ' processes';
+    const share = v.total > 0 ? v.tabsTotal / v.total : 0;
+    document.getElementById('mem-meter-tabs').style.width = (share * 100).toFixed(1) + '%';
+    document.getElementById('mem-meter-browser').style.width = ((1 - share) * 100).toFixed(1) + '%';
+
+    for (const b of $saver.children) b.setAttribute('aria-checked', String(b.dataset.value === v.saver));
+
+    // Update rows in place (keeps hover and scroll position), in the given order.
+    const existing = new Map([...$memList.children].map((r) => [r.dataset.id, r]));
+    v.tabs.forEach((t, index) => {
+      let row = existing.get(String(t.id));
+      if (row) existing.delete(String(t.id));
+      else row = memRow(t.id);
+      row.className = 'mem-row ' + t.state;
+      const title = t.title || t.site;
+      row.querySelector('.mem-title').textContent = title;
+      const notes = [t.site, STATE_TEXT[t.state] || ''];
+      if (t.private) notes.push('Private');
+      if (t.audible) notes.push('Playing sound');
+      if (t.shared > 0) notes.push('Shared with ' + t.shared + (t.shared === 1 ? ' tab' : ' tabs'));
+      row.querySelector('.mem-sub').textContent = notes.filter(Boolean).join(' · ');
+      row.querySelector('.mem-value').textContent =
+        t.state === 'internal' ? '—' : t.memory == null ? '…' : formatMemory(t.memory);
+      row.querySelector('.mem-sleep').disabled = !t.canSleep;
+      if ($memList.children[index] !== row) $memList.insertBefore(row, $memList.children[index] || null);
+    });
+    existing.forEach((r) => r.remove());
+
+    const n = v.canFree;
+    document.getElementById('mem-free').disabled = n === 0;
+    document.getElementById('mem-free-hint').textContent = n === 0
+      ? 'Nothing to free right now: no other tabs are running.'
+      : 'Puts ' + n + (n === 1 ? ' background tab' : ' background tabs') + ' to sleep. Tabs playing sound and private tabs stay.';
+
+    if (memPoll == null) memPoll = setInterval(() => send({ type: 'memoryPanelRefresh' }), 1200);
+  }
+
+  function onHide() {
+    clearInterval(memPoll);
+    memPoll = null;
+  }
+
+  // Called by Rust when the card appears and then every second.
+  // All text goes in through textContent: titles come from web pages.
+  function renderCard(c) {
+    onHide();
+    $mem.hidden = true;
+    $menu.hidden = true;
+    const $card = document.getElementById('card');
+    $card.hidden = false;
+    $card.className = c.state;
+    document.getElementById('card-title').textContent = c.title;
+    document.getElementById('card-site').textContent = c.site;
+    document.getElementById('card-private').hidden = !c.private;
+
+    const $value = document.getElementById('card-value');
+    const $bar = document.getElementById('card-bar');
+    const $fill = document.getElementById('card-fill');
+    const $note = document.getElementById('card-note');
+    let value, note, fraction = 0;
+    if (c.state === 'internal') {
+      value = '—';
+      note = 'Part of the browser window';
+    } else if (c.state === 'sleeping') {
+      value = '0 MB';
+      note = 'Sleeping to save memory · opens when you click it';
+    } else if (c.memory == null) {
+      value = 'Measuring…';
+      note = 'Asking the web engine';
+    } else {
+      value = formatMemory(c.memory);
+      // The bar fills up at 1 GB.
+      fraction = Math.min(1, c.memory / (1024 * 1024 * 1024));
+      if (c.state === 'frozen') note = 'Frozen in the background to save power';
+      else if (c.shared === 1) note = 'Shared with 1 other tab from the same site';
+      else if (c.shared > 1) note = 'Shared with ' + c.shared + ' other tabs from the same site';
+      else note = 'Live · updates every second';
+    }
+    $value.textContent = value;
+    $note.textContent = note;
+    $bar.classList.toggle('medium', fraction >= 0.3 && fraction < 0.6);
+    $bar.classList.toggle('high', fraction >= 0.6);
+    $fill.style.width = (fraction * 100).toFixed(1) + '%';
+  }
+
+  function render(payload) {
+    onHide();
+    $mem.hidden = true;
+    document.getElementById('card').hidden = true;
+    $menu.hidden = false;
+    const activeKey = document.activeElement && document.activeElement.dataset.focusKey;
+    $menu.textContent = '';
+    for (const entry of payload.entries || []) {
+      if (entry.kind === 'sep') {
+        const sep = document.createElement('div');
+        sep.className = 'sep';
+        $menu.append(sep);
+      } else if (entry.kind === 'zoom') {
+        $menu.append(makeZoomRow(entry));
+      } else if (entry.kind === 'item') {
+        $menu.append(makeItem(entry, () => {
+          if (payload.tabId != null) {
+            send({ type: 'tabMenuCommand', id: payload.tabId, command: entry.id });
+          } else {
+            send({ type: 'menuCommand', command: entry.id, close: true });
+          }
+        }));
+      }
+    }
+    if (activeKey) {
+      let target = $menu.querySelector(`[data-focus-key="${CSS.escape(activeKey)}"]`);
+      if ((!target || target.disabled) && activeKey === 'resetZoom') {
+        target = $menu.querySelector('[data-focus-key="zoomIn"]:not(:disabled), [data-focus-key="zoomOut"]:not(:disabled)');
+      }
+      if (target && !target.disabled) target.focus();
+    }
+  }
+
+  document.addEventListener('keydown', (e) => {
+    const k = (e.key || '').toLowerCase();
+    if (e.key === 'Escape' || (e.altKey && !e.ctrlKey && !e.metaKey && (k === 'f' || k === 'e'))) {
+      e.preventDefault();
+      send({ type: 'closeMenu' });
+      return;
+    }
+    const items = [...$menu.querySelectorAll('button:not(:disabled)')];
+    if (!items.length) return;
+    const active = document.activeElement;
+    const idx = items.indexOf(active);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const zBtns = active && active.closest('.zoom-row')
+        ? [...active.closest('.zoom-row').querySelectorAll('button:not(:disabled)')]
+        : [];
+      if (zBtns.length > 1) {
+        e.preventDefault();
+        const zi = zBtns.indexOf(active);
+        const step = e.key === 'ArrowRight' ? 1 : -1;
+        zBtns[(zi + step + zBtns.length) % zBtns.length].focus();
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      items[(idx + 1) % items.length].focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[idx < 0 ? items.length - 1 : (idx - 1 + items.length) % items.length].focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      items[0].focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      items[items.length - 1].focus();
+    }
+  });
+
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  window.menu = { render, renderCard, renderMemory, onHide };
+})();
+</script>
+</body>
+</html>
+

@@ -1,0 +1,48 @@
+[package]
+name = "rust-browser"
+version = "0.1.0"
+edition = "2021"
+description = "A fast, lightweight Windows web browser built in Rust on top of WebView2."
+license = "MIT"
+repository = "https://github.com/she1bys/rust-browser"
+publish = false
+
+[build-dependencies]
+# Puts the app icon and version details into the .exe (see build.rs).
+winresource = "0.1"
+
+[dependencies]
+wry = "0.57"
+tao = "0.37"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Native "choose a folder" dialog for the download location.
+rfd = { version = "0.18", default-features = false }
+
+# Must match the versions wry itself uses, because the browser shares
+# WebView2 objects with wry (see src/download_hook.rs).
+webview2-com = "0.39"
+windows = "0.62"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

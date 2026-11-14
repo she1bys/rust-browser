@@ -1,0 +1,2672 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rust Browser</title>
+<style>
+  /* Tab strip + toolbar height must equal CHROME_HEIGHT in src/browser.rs (38 + 50 = 88).
+     Light or dark comes from the Theme setting: Rust tells WebView2 which colour
+     scheme to prefer, and the media query below follows it. */
+  :root {
+    --bg: #dee2e8;
+    --surface: #f8f9fb;
+    --text: #1f2328;
+    --muted: #5b6570;
+    --field: #ffffff;
+    --border: #c8cdd5;
+    --accent: #2563eb;
+    --on-accent: #ffffff;
+    --danger: #c62828;
+    --hover: rgba(0, 0, 0, 0.07);
+    --press: rgba(0, 0, 0, 0.13);
+    --shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+    --private: #7c3aed;
+    /* Motion: one quick, one standard, and a shared easing curve. */
+    --fast: 0.12s;
+    --smooth: 0.18s;
+    --ease: cubic-bezier(0.2, 0, 0, 1);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17191d;
+      --surface: #272a30;
+      --text: #e7e9ec;
+      --muted: #9ba4ae;
+      --field: #17191d;
+      --border: #3b4048;
+      --accent: #7aa7ff;
+      --on-accent: #10131a;
+      --danger: #ff8a80;
+      --hover: rgba(255, 255, 255, 0.08);
+      --press: rgba(255, 255, 255, 0.15);
+      --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+      --private: #a78bfa;
+    }
+  }
+  /* People who ask Windows for less motion get none. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    user-select: none;
+    cursor: default;
+  }
+  /* Switching theme fades instead of snapping. */
+  body, #toolbar, .panel, .card, #address-wrap, .btn, .select, .text {
+    transition: background-color var(--smooth) var(--ease), color var(--smooth) var(--ease),
+      border-color var(--smooth) var(--ease), box-shadow var(--fast) var(--ease);
+  }
+  button { font: inherit; color: inherit; cursor: default; }
+
+  /* ---- tab strip (also the window's title bar) --------------------------- */
+
+  #tabstrip {
+    height: 38px;
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    padding: 0 0 0 6px;
+  }
+  #tabs {
+    display: flex;
+    align-items: flex-end;
+    flex: 0 1 auto;
+    min-width: 0;
+    height: 38px;
+    gap: 2px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  #tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    position: relative;
+    /* Lets the styles below react to how wide this tab currently is. */
+    container-type: inline-size;
+    /* Fixed preferred width so tabs don't resize as page titles change;
+       they shrink evenly once the strip is full. */
+    flex: 0 1 224px;
+    width: 224px;
+    max-width: 224px;
+    /* Never narrower than the icon plus the close button. With more tabs
+       than fit, the tab strip scrolls (mouse wheel) instead. */
+    min-width: 72px;
+    height: 30px;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 6px 0 10px;
+    border-radius: 8px;
+    color: var(--muted);
+    overflow: hidden;
+    touch-action: none;
+    /* New tabs grow in; closing tabs shrink away (see .closing). */
+    animation: tab-in var(--smooth) var(--ease);
+    transition: max-width var(--smooth) var(--ease), min-width var(--smooth) var(--ease),
+      height var(--fast) var(--ease), margin var(--fast) var(--ease),
+      padding var(--smooth) var(--ease), opacity var(--fast) var(--ease),
+      background-color var(--fast) var(--ease), color var(--fast) var(--ease),
+      box-shadow var(--fast) var(--ease), transform 140ms var(--ease);
+  }
+  @keyframes tab-in {
+    from { max-width: 0; min-width: 0; padding-left: 0; padding-right: 0; opacity: 0; }
+  }
+  .tab.closing {
+    max-width: 0;
+    min-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .tab:hover { background: var(--hover); color: var(--text); }
+  .tab.active {
+    z-index: 2;
+    height: 34px;
+    margin-bottom: 0;
+    border-radius: 10px 10px 0 0;
+    background: var(--surface);
+    color: var(--text);
+    font-weight: 500;
+    box-shadow: 0 2px 0 var(--surface), inset 0 1px 0 var(--border), inset 1px 0 0 var(--border), inset -1px 0 0 var(--border);
+  }
+  /* Sleeping tabs (memory freed; they reload when opened) look faded, like Edge. */
+  .tab.sleeping .title,
+  .tab.sleeping .favicon,
+  .tab.sleeping .tab-globe { opacity: 0.55; transition: opacity var(--smooth) var(--ease); }
+  .tab.sleeping:hover .title,
+  .tab.sleeping:hover .favicon,
+  .tab.sleeping:hover .tab-globe { opacity: 0.85; }
+  .tab.split-left,
+  .tab.split-right {
+    box-shadow: inset 0 2.5px 0 var(--accent);
+  }
+  .tab.split-left.active,
+  .tab.split-right.active {
+    box-shadow: 0 2px 0 var(--surface), inset 0 2.5px 0 var(--accent), inset 1px 0 0 var(--border), inset -1px 0 0 var(--border);
+  }
+  .tab.dragging {
+    z-index: 6;
+    opacity: 0.96;
+    cursor: grabbing;
+    will-change: transform;
+    transition: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+  }
+  .tab.sliding { will-change: transform; }
+
+  /* Private tabs: subtle purple tint and mask icon, so they're never mistaken
+     for normal ones. */
+  .tab.private:not(.active) { background: color-mix(in srgb, var(--private) 10%, transparent); }
+  .tab.private:not(.active):hover { background: color-mix(in srgb, var(--private) 16%, transparent); }
+  .tab.private.active { background: color-mix(in srgb, var(--private) 10%, var(--surface)); }
+  .tab .private-icon { display: none; flex: none; width: 15px; height: 15px; color: var(--private); }
+  .tab.private .private-icon { display: block; }
+  .tab.private .favicon,
+  .tab.private .tab-globe { display: none; }
+  .tab .private-icon path { fill: currentColor; stroke: none; }
+
+  .tab .tab-globe,
+  .tab .tab-dl {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 14px;
+    height: 14px;
+    color: var(--muted);
+    opacity: 0.72;
+  }
+  .tab .tab-dl { color: var(--accent); opacity: 0.9; }
+  .tab .tab-globe svg,
+  .tab .tab-dl svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .tab.loading .tab-globe,
+  .tab.loading .tab-dl { display: none; }
+
+  /* Speaker on tabs that are playing sound; click it to mute. */
+  .tab .audio { display: none; width: 22px; height: 22px; border-radius: 50%; }
+  .tab.audible .audio, .tab.muted .audio { display: grid; }
+  .tab .audio svg { width: 14px; height: 14px; }
+  .tab .audio .speaker-off { display: none; }
+  .tab.muted .audio .speaker-on { display: none; }
+  .tab.muted .audio .speaker-off { display: block; }
+  .tab .audio:hover { background: var(--press); }
+  @container (max-width: 120px) {
+    .tab:not(.active) .audio { display: none; }
+  }
+
+  /* A thin divider between neighbouring tabs. It steps aside next to the
+     active tab and next to the tab under the mouse, which have their own shape. */
+  .tab::before {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 8px;
+    bottom: 8px;
+    width: 1px;
+    background: var(--border);
+    transition: opacity var(--fast) var(--ease);
+  }
+  .tab:first-child::before,
+  .tab.active::before,
+  .tab.active + .tab::before,
+  .tab.dragging::before,
+  .tab.dragging + .tab::before,
+  .tab:hover::before,
+  .tab:hover + .tab::before { opacity: 0; }
+
+  .tab .title {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    /* Long titles fade out at the end instead of being cut with "...". */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+  }
+  .tab .favicon {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    object-fit: contain;
+  }
+  .tab.loading .favicon { display: none; }
+  .tab .spinner {
+    flex: none;
+    width: 0;
+    height: 12px;
+    margin-right: -8px; /* takes no room until the page is loading */
+    border: 0 solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    opacity: 0;
+    transition: width var(--fast) var(--ease), margin var(--fast) var(--ease), opacity var(--fast) var(--ease);
+  }
+  .tab.loading .spinner {
+    width: 12px;
+    border-width: 2px;
+    margin-right: 0;
+    opacity: 1;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .icon-btn {
+    position: relative;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    border-radius: 6px;
+    transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease),
+      transform var(--fast) var(--ease), opacity var(--fast) var(--ease);
+  }
+  .icon-btn:disabled { opacity: 0.35; pointer-events: none; }
+  .icon-btn:hover { background: var(--hover); }
+  .icon-btn:active { background: var(--press); transform: scale(0.92); }
+  .icon-btn.on { background: var(--press); color: var(--accent); }
+  .icon-btn svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+  }
+  /* Draw every icon line at the same on-screen thickness, however small the
+     icon is shown. (Without this, small icons get hairline strokes.) */
+  .icon-btn svg * { vector-effect: non-scaling-stroke; }
+
+  /* Close (x) on every tab, however many are open: full strength on the
+     active tab and the one under the mouse, a little softer on the rest. */
+  .tab .close { flex: none; width: 20px; height: 20px; border-radius: 50%; opacity: 0.8; }
+  .tab:not(.active):not(:hover) .close { opacity: 0.5; }
+  .tab .close:hover { background: var(--press); opacity: 1; }
+  .tab .close svg { width: 12px; height: 12px; stroke-width: 1.9; }
+  /* Narrow tabs: the title makes way so the icon and the close button fit. */
+  @container (max-width: 96px) {
+    .tab .title { display: none; }
+    .tab { justify-content: space-between; }
+  }
+
+  /* More tabs than fit: a soft fade on the side(s) with tabs out of view. */
+  #tabs.more-left { -webkit-mask-image: linear-gradient(to right, transparent, #000 24px); mask-image: linear-gradient(to right, transparent, #000 24px); }
+  #tabs.more-right { -webkit-mask-image: linear-gradient(to left, transparent, #000 24px); mask-image: linear-gradient(to left, transparent, #000 24px); }
+  #tabs.more-left.more-right {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  }
+  #newtab { width: 28px; height: 28px; margin-bottom: 5px; border-radius: 8px; }
+  #newtab svg { width: 17px; height: 17px; stroke-width: 1.8; }
+
+  /* Empty tab-strip space drags the window; the window buttons sit at its right end. */
+  #drag { flex: 1; align-self: stretch; min-width: 48px; }
+  #caption { flex: none; align-self: stretch; display: flex; }
+  #caption button {
+    width: 46px;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+  #caption button:hover { background: var(--hover); }
+  #caption button:active { background: var(--press); }
+  #caption #win-close:hover { background: #e81123; color: #fff; }
+  #caption #win-close:active { background: #b50d1c; color: #fff; }
+  #caption svg {
+    width: 10px;
+    height: 10px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1;
+    pointer-events: none;
+  }
+  #win-max .restore { display: none; }
+  body.maximized #win-max .restore { display: block; }
+  body.maximized #win-max .max { display: none; }
+
+  /* Top edge of the window: drag it to resize. (The left, right and bottom
+     edges are handled by Windows itself.) Not shown while maximized. */
+  #resize-top {
+    position: fixed;
+    z-index: 10;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    display: flex;
+    justify-content: space-between;
+    cursor: ns-resize;
+  }
+  #resize-top div { width: 8px; height: 100%; }
+  #resize-nw { cursor: nwse-resize; }
+  #resize-ne { cursor: nesw-resize; }
+  body.maximized #resize-top { display: none; }
+
+  /* ---- toolbar ----------------------------------------------------------- */
+
+  #toolbar {
+    height: 50px;
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding: 0 6px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  #toolbar .icon-btn { width: 30px; height: 30px; border-radius: 8px; }
+  #toolbar .icon-btn svg { width: 16px; height: 16px; }
+  /* Memory button: a chip icon and the browser's total memory use. */
+  #toolbar #memory-btn {
+    width: auto;
+    min-width: 30px;
+    padding: 0 8px 0 7px;
+    display: flex;
+    gap: 5px;
+    color: var(--muted);
+  }
+  #toolbar #memory-btn:hover, #toolbar #memory-btn.on { color: var(--text); }
+  #memory-label {
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  #memory-label:empty { display: none; }
+  #address-wrap {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 38px;
+    margin: 0 4px;
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 19px;
+    background: var(--field);
+    padding: 0 8px 0 12px;
+  }
+  #address-wrap:hover:not(:focus-within) {
+    border-color: color-mix(in srgb, var(--border) 60%, var(--muted));
+    background: color-mix(in srgb, var(--field) 94%, var(--hover));
+  }
+  #address-wrap:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+    background: var(--field);
+  }
+  #address-wrap:focus-within #status-pill,
+  #address-wrap:focus-within #zoom-btn,
+  #address-wrap:focus-within .sec-label { display: none; }
+  #address {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    outline: none;
+    user-select: text;
+    cursor: text;
+  }
+  #address::placeholder { color: var(--muted); }
+  /* The suggestion list stays, but without the native drop-down arrow,
+     which no browser shows in its address bar. */
+  #address::-webkit-calendar-picker-indicator { display: none !important; }
+  #address-clear {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    margin: 0 2px 0 4px;
+    border-radius: 50%;
+    color: var(--muted);
+  }
+  #address-clear:hover { color: var(--text); }
+  #address-clear svg { width: 12px; height: 12px; stroke-width: 2; }
+  #status-pill {
+    flex: 0 1 160px;
+    max-width: 24%;
+    margin-right: 4px;
+    padding: 3px 9px;
+    border-radius: 10px;
+    background: var(--hover);
+    color: var(--muted);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  #zoom-btn {
+    flex: none;
+    height: 22px;
+    margin-right: 4px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 11px;
+    background: var(--hover);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  #zoom-btn:hover { background: var(--press); }
+  /* Left end of the address bar: what kind of page this is. */
+  .sec {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    margin-right: 6px;
+    padding: 0 5px;
+    border-radius: 12px;
+    color: var(--muted);
+  }
+  .sec svg {
+    display: none;
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .sec svg * { vector-effect: non-scaling-stroke; }
+  .sec-label { display: none; font-size: 12px; font-weight: 600; }
+  .sec[data-kind="search"] .sec-search,
+  .sec[data-kind="secure"] .sec-lock,
+  .sec[data-kind="file"] .sec-file,
+  .sec[data-kind="insecure"] .sec-warn,
+  .sec[data-kind="insecure"] .sec-label { display: block; }
+  .sec[data-kind="insecure"] { padding: 0 8px; background: var(--hover); color: var(--danger); }
+  #private-badge {
+    flex: none;
+    margin-right: 6px;
+    padding: 3px 9px;
+    border-radius: 11px;
+    background: var(--private);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  #menu-btn svg circle { fill: currentColor; stroke: none; }
+
+  #bookmark-btn { width: 26px !important; height: 26px !important; border-radius: 50% !important; }
+  #bookmark-btn svg { width: 14px; height: 14px; }
+  #bookmark-btn.saved { color: var(--accent); }
+  #bookmark-btn.saved svg { fill: currentColor; }
+
+  /* A thin moving line under the toolbar while the current page loads. */
+  #loadbar {
+    position: fixed;
+    z-index: 5;
+    top: 86px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--smooth) var(--ease);
+  }
+  body.bookmarks-bar #toolbar { border-bottom-color: transparent; }
+  body.bookmarks-bar #loadbar { top: 118px; }
+  body.bookmarks-bar .panel,
+  body.bookmarks-bar .tab-page { top: 120px; }
+  body.bookmarks-bar #close-confirm { inset: 120px 0 0 0; }
+
+  /* Optional bookmarks strip below the toolbar. */
+  #bookmarks-bar {
+    height: 32px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+  }
+  #bookmarks-bar-list {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow: hidden;
+  }
+  .bm-chip {
+    flex: 0 1 auto;
+    max-width: 176px;
+    height: 24px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+  .bm-chip:hover { background: var(--hover); }
+  .bm-chip:active { background: var(--press); }
+  .bm-chip svg {
+    flex: none;
+    width: 13px;
+    height: 13px;
+    color: var(--accent);
+    fill: currentColor;
+  }
+  .bm-chip span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #bookmarks-bar-empty {
+    flex: 1;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 0 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #bm-manage-btn {
+    flex: none;
+    width: auto;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  #bm-manage-btn:hover { color: var(--text); }
+  #loadbar.on { opacity: 1; }
+  #loadbar::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 30%;
+    border-radius: 1px;
+    background: var(--accent);
+    will-change: transform;
+    animation: load 1.1s ease-in-out infinite;
+    animation-play-state: paused;
+  }
+  #loadbar.on::after { animation-play-state: running; }
+  @keyframes load {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(340%); }
+  }
+
+  #split-btn.on {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  /* Downloads button: live progress ring + active count while downloading,
+     drop & pulse animation when added, and unseen dot until visited. */
+  #downloads-btn { overflow: visible; }
+  #downloads-btn.busy { color: var(--accent); }
+  #downloads-btn::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    opacity: 0;
+    pointer-events: none;
+  }
+  #downloads-btn.added::before { animation: dl-pulse 0.85s var(--ease); }
+  #downloads-btn.added {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    animation: dl-catch 0.5s var(--ease);
+  }
+  #downloads-btn.added .dl-stem { animation: dl-drop 0.65s var(--ease); }
+  #downloads-btn.busy:not(.added) .dl-stem { animation: nudge 1.2s ease-in-out infinite; }
+  /* Flying file card + comet trail + catch burst when a download starts */
+  .dl-fly {
+    position: fixed;
+    z-index: 60;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 4px 7px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border));
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 36%, transparent);
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+  .dl-fly-icon {
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent);
+  }
+  .dl-fly-icon svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .dl-fly-name {
+    max-width: 84px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .dl-fly-trail {
+    position: fixed;
+    z-index: 59;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+  .dl-spark {
+    position: fixed;
+    z-index: 61;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+  @keyframes dl-catch {
+    0% { transform: scale(1); }
+    35% { transform: scale(1.24); }
+    70% { transform: scale(0.92); }
+    100% { transform: scale(1); }
+  }
+  #downloads-btn .dl-ring {
+    display: none;
+    position: absolute;
+    inset: 2px;
+    width: 26px !important;
+    height: 26px !important;
+    transform: rotate(-90deg);
+    pointer-events: none;
+  }
+  #downloads-btn.busy .dl-ring { display: block; }
+  #downloads-btn .dl-ring-track {
+    stroke: var(--border);
+    stroke-width: 2.2;
+    opacity: 0.55;
+  }
+  #downloads-btn .dl-ring-fill {
+    stroke: var(--accent);
+    stroke-width: 2.2;
+    stroke-dasharray: 75.4;
+    stroke-dashoffset: 75.4;
+    transition: stroke-dashoffset 0.2s linear;
+  }
+  #downloads-btn.busy.indeterminate .dl-ring { animation: spin 1.1s linear infinite; }
+  #downloads-btn.busy.indeterminate .dl-ring-fill { stroke-dasharray: 24 52; stroke-dashoffset: 0; }
+  #dl-badge {
+    position: absolute;
+    right: -2px;
+    bottom: -1px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 7px;
+    background: var(--accent);
+    color: var(--on-accent);
+    box-shadow: 0 0 0 2px var(--surface);
+    font-size: 9.5px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+    pointer-events: none;
+    animation: badge-pop 0.24s var(--ease);
+  }
+  #downloads-btn::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 2px var(--surface);
+    transform: scale(0);
+    transition: transform var(--smooth) var(--ease);
+  }
+  #downloads-btn:not(.busy).unseen::after { transform: scale(1); }
+  @keyframes nudge { 50% { transform: translateY(2px); } }
+  @keyframes dl-drop {
+    0% { transform: translateY(-7px); opacity: 0.2; }
+    45% { transform: translateY(2.5px); opacity: 1; }
+    75% { transform: translateY(-1px); }
+    100% { transform: translateY(0); }
+  }
+  @keyframes dl-pulse {
+    0% { transform: scale(0.7); opacity: 0.85; }
+    100% { transform: scale(1.65); opacity: 0; }
+  }
+  @keyframes badge-pop {
+    0% { transform: scale(0.4); }
+    70% { transform: scale(1.15); }
+    100% { transform: scale(1); }
+  }
+
+  /* ---- panels (Settings, Downloads, Bookmarks, History) ------------------ */
+
+  /* Rust stretches this web view over the whole window while a panel or
+     the Downloads tab is open; otherwise clipped below the toolbar. */
+  .panel, .tab-page {
+    position: fixed;
+    top: 88px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: auto;
+    background: var(--surface);
+  }
+  .panel { animation: fade-in var(--smooth) var(--ease); }
+  .panel:focus, .tab-page:focus { outline: none; }
+  .tab-page { background: var(--bg); }
+  .tab-page .panel-inner { max-width: 780px; animation: none; }
+  .dl-page-title { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .dl-page-badge {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent);
+    flex: none;
+  }
+  .dl-page-badge svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .panel-inner {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 28px 24px 56px;
+    animation: rise-in 0.22s var(--ease);
+  }
+  /* Played just before the panel closes. */
+  .panel.leaving { opacity: 0; transition: opacity var(--fast) var(--ease); }
+  .panel.leaving .panel-inner { transform: translateY(6px); transition: transform var(--fast) var(--ease); }
+  @keyframes fade-in { from { opacity: 0; } }
+  @keyframes rise-in { from { opacity: 0; transform: translateY(10px); } }
+
+  .panel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; }
+  .panel h1, .tab-page h1 { flex: 1; margin: 0; font-size: 22px; font-weight: 600; }
+  .panel h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+  .panel section { margin-bottom: 26px; }
+  .panel .hint, .tab-page .hint { margin: -4px 0 10px; color: var(--muted); line-height: 1.45; }
+  .panel .hint.section-note { margin: 10px 2px 0; }
+  .panel-search { width: 100%; margin-bottom: 14px; }
+
+  .btn {
+    flex: none;
+    height: 30px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--field);
+    white-space: nowrap;
+    transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease),
+      border-color var(--fast) var(--ease), transform var(--fast) var(--ease);
+  }
+  .btn:hover { background: var(--hover); }
+  .btn:active { background: var(--press); transform: scale(0.97); }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn:focus-visible, .icon-btn:focus-visible, .select:focus-visible, .switch:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--field); }
+  .row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 9px 14px; }
+  .row + .row, .option + .option { border-top: 1px solid var(--border); }
+  .row-text { flex: 1; min-width: 0; }
+  .row-hint { margin-top: 3px; color: var(--muted); line-height: 1.4; }
+  .row-hint.path { user-select: text; overflow-wrap: anywhere; }
+
+  .entry-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+  .entry-row + .entry-row { border-top: 1px solid var(--border); }
+  .entry-link {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    border: 0;
+    padding: 2px 4px;
+    margin: -2px -4px;
+    border-radius: 6px;
+    background: transparent;
+  }
+  .entry-link:hover { background: var(--hover); }
+  .entry-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .entry-url { margin-top: 2px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .entry-actions { flex: none; display: flex; align-items: center; gap: 4px; }
+  .entry-actions .icon-btn { width: 28px; height: 28px; }
+  .entry-actions .icon-btn svg { width: 14px; height: 14px; }
+
+  /* A list of choices where exactly one is picked. */
+  .option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 40px;
+    padding: 0 14px;
+    transition: background-color var(--fast) var(--ease);
+  }
+  .option:hover { background: var(--hover); }
+  .option input { margin: 0; width: 16px; height: 16px; accent-color: var(--accent); }
+  .option:has(input:checked) { font-weight: 600; }
+  .option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  /* The same thing laid out as a row of buttons. */
+  .seg { flex: none; display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--hover); }
+  .seg label { position: relative; }
+  .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; }
+  .seg span {
+    display: block;
+    padding: 5px 12px;
+    border-radius: 6px;
+    white-space: nowrap;
+    color: var(--muted);
+    transition: background-color var(--smooth) var(--ease), color var(--smooth) var(--ease),
+      box-shadow var(--smooth) var(--ease);
+  }
+  .seg label:hover span { color: var(--text); }
+  .seg input:checked + span { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+  .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .select, .text {
+    flex: none;
+    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--field);
+    color: var(--text);
+    font: inherit;
+  }
+  .select { padding: 0 6px; }
+  .text { width: 260px; padding: 0 10px; outline: none; user-select: text; cursor: text; }
+  .text:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .text::placeholder { color: var(--muted); }
+
+  .switch {
+    flex: none;
+    position: relative;
+    width: 38px;
+    height: 22px;
+    border: 0;
+    padding: 0;
+    border-radius: 11px;
+    background: var(--border);
+    transition: background-color var(--smooth) var(--ease);
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    transition: transform var(--smooth) var(--ease);
+  }
+  .switch[aria-checked="true"] { background: var(--accent); }
+  .switch[aria-checked="true"]::after { transform: translateX(16px); }
+
+  /* ---- downloads list ---------------------------------------------------- */
+
+  .dl {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-height: 96px;
+    padding: 12px 14px;
+    overflow: hidden;
+    animation: row-in var(--smooth) var(--ease);
+    transition: max-height var(--smooth) var(--ease), padding var(--smooth) var(--ease), opacity var(--fast) var(--ease);
+  }
+  @keyframes row-in { from { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; } }
+  .dl.closing { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; pointer-events: none; }
+  .dl + .dl { border-top: 1px solid var(--border); }
+  .dl-main { flex: 1; min-width: 0; }
+  .dl-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
+  .dl-status { margin-top: 3px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dl.failed .dl-status, .dl.missing .dl-status { color: var(--danger); }
+  .dl.missing .dl-name, .dl.failed .dl-name, .dl.cancelled .dl-name { text-decoration: line-through; color: var(--muted); }
+  .dl-bar { height: 4px; margin-top: 8px; border-radius: 2px; background: var(--border); overflow: hidden; }
+  .dl-fill { height: 100%; width: 0; border-radius: 2px; background: var(--accent); transition: width 0.2s linear; }
+  .dl-bar.unknown .dl-fill {
+    width: 35%;
+    will-change: transform;
+    animation: slide 1.1s ease-in-out infinite alternate;
+  }
+  @keyframes slide { from { transform: translateX(0); } to { transform: translateX(185.7%); } }
+  .dl-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+  .dl-actions .btn { height: 28px; padding: 0 10px; }
+  .dl-actions .icon-btn { width: 28px; height: 28px; }
+  .dl-actions .icon-btn svg { width: 14px; height: 14px; }
+
+  /* ---- close confirmation modal ------------------------------------------ */
+
+  #close-confirm {
+    position: fixed;
+    z-index: 30;
+    inset: 88px 0 0 0;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.35);
+    animation: fade-in var(--fast) var(--ease);
+  }
+  .modal-card {
+    width: min(420px, calc(100% - 32px));
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .modal-card h2 { margin: 0 0 8px; font-size: 16px; }
+  .modal-card p { margin: 0 0 18px; color: var(--muted); line-height: 1.45; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+  /* ---- short messages ("Browsing data cleared") --------------------------- */
+
+  #toast {
+    position: fixed;
+    z-index: 40;
+    left: 50%;
+    bottom: 28px;
+    max-width: calc(100% - 48px);
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: var(--text);
+    color: var(--surface);
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translate(-50%, 12px);
+    pointer-events: none;
+    transition: opacity var(--smooth) var(--ease), transform var(--smooth) var(--ease);
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+  #toast { display: flex; align-items: center; gap: 12px; }
+  #toast-action {
+    flex: none;
+    height: 24px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 5px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 600;
+  }
+  #toast-action:hover { filter: brightness(1.1); }
+  /* With no panel open this web view is only the tab strip and toolbar tall,
+     so the message sits in the toolbar row instead of at the bottom. */
+  body:not(.full) #toast {
+    top: 44px;
+    bottom: auto;
+    left: auto;
+    right: 152px;
+    max-width: calc(100% - 300px);
+    min-height: 30px;
+    padding: 3px 4px 3px 14px;
+    border-radius: 15px;
+    transform: translateY(-6px);
+  }
+  body:not(.full) #toast:not(:has(#toast-action:not([hidden]))) { padding-right: 14px; }
+  body:not(.full) #toast.show { transform: translateY(0); }
+  #toast.error { background: var(--danger); color: var(--on-accent); }
+</style>
+</head>
+<body>
+  <div id="tabstrip">
+    <div id="tabs" role="tablist"></div>
+    <button id="newtab" class="icon-btn" title="New tab (Ctrl+T)" aria-label="New tab">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <div id="drag"></div>
+    <div id="caption">
+      <button id="win-min" title="Minimize" aria-label="Minimize">
+        <svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg>
+      </button>
+      <button id="win-max" title="Maximize" aria-label="Maximize">
+        <svg class="max" viewBox="0 0 10 10"><path d="M.5 .5h9v9h-9z"/></svg>
+        <svg class="restore" viewBox="0 0 10 10"><path d="M2.5 2.5v-2h7v7h-2M.5 2.5h7v7h-7z"/></svg>
+      </button>
+      <button id="win-close" title="Close" aria-label="Close">
+        <svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg>
+      </button>
+    </div>
+  </div>
+  <div id="resize-top"><div id="resize-nw"></div><div id="resize-ne"></div></div>
+
+  <div id="toolbar">
+    <button id="back" class="icon-btn" title="Back (Alt+Left)" aria-label="Back" disabled>
+      <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </button>
+    <button id="forward" class="icon-btn" title="Forward (Alt+Right)" aria-label="Forward" disabled>
+      <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+    </button>
+    <button id="reload" class="icon-btn" title="Reload (F5)" aria-label="Reload">
+      <svg class="icon-reload" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
+      <svg class="icon-stop" viewBox="0 0 24 24" hidden><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <button id="home" class="icon-btn" title="Home (Alt+Home)" aria-label="Home" hidden>
+      <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10"/></svg>
+    </button>
+    <div id="address-wrap">
+      <span id="private-badge" hidden>Private</span>
+      <span id="security" class="sec" aria-hidden="true">
+        <svg class="sec-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>
+        <svg class="sec-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+        <svg class="sec-warn" viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4z"/><path d="M12 10v4.5M12 17.2v.3"/></svg>
+        <svg class="sec-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>
+        <span class="sec-label">Not secure</span>
+      </span>
+      <input id="address" type="text" list="address-suggestions" spellcheck="false" autocomplete="off"
+             placeholder="Search or enter address" aria-label="Address and search bar">
+      <datalist id="address-suggestions"></datalist>
+      <button id="address-clear" class="icon-btn" title="Clear" aria-label="Clear address" hidden>
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <span id="status-pill" hidden></span>
+      <button id="zoom-btn" title="Reset zoom (Ctrl+0)" aria-label="Reset zoom" hidden>100%</button>
+      <button id="bookmark-btn" class="icon-btn" title="Bookmark this page (Ctrl+D)" aria-label="Bookmark this page">
+        <svg viewBox="0 0 24 24"><path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8l-5.8 3.1 1.1-6.5L2.6 9.8l6.5-.9z"/></svg>
+      </button>
+    </div>
+    <button id="split-swap" class="icon-btn" title="Swap split panes" aria-label="Swap split panes" hidden>
+      <svg viewBox="0 0 24 24"><path d="M4 9h16m0 0-3-3m3 3-3 3M20 15H4m0 0 3-3m-3 3 3 3"/></svg>
+    </button>
+    <button id="split-btn" class="icon-btn" title="Split view" aria-label="Split view">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>
+    </button>
+    <button id="memory-btn" class="icon-btn" title="Memory used by the browser · click to free memory" aria-label="Memory">
+      <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+      <span id="memory-label"></span>
+    </button>
+    <button id="downloads-btn" class="icon-btn" title="Downloads (Ctrl+J)" aria-label="Downloads">
+      <svg class="dl-ring" viewBox="0 0 28 28" aria-hidden="true">
+        <circle class="dl-ring-track" cx="14" cy="14" r="12"/>
+        <circle class="dl-ring-fill" cx="14" cy="14" r="12"/>
+      </svg>
+      <svg class="dl-arrow" viewBox="0 0 24 24">
+        <path class="dl-stem" d="M12 3v12M7 10l5 5 5-5"/>
+        <path d="M5 21h14"/>
+      </svg>
+      <span id="dl-badge" hidden></span>
+    </button>
+    <button id="menu-btn" class="icon-btn" title="Menu (Alt+F)" aria-label="Menu" aria-haspopup="menu">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="18.5" r="1.3"/></svg>
+    </button>
+  </div>
+  <div id="bookmarks-bar" hidden>
+    <div id="bookmarks-bar-list"></div>
+    <span id="bookmarks-bar-empty" hidden>Bookmark pages with ★ or Ctrl+D to see them here</span>
+    <button id="bm-manage-btn" class="icon-btn" title="Manage bookmarks (Ctrl+Shift+O)">All bookmarks</button>
+  </div>
+  <div id="loadbar"></div>
+
+  <div id="settings" class="panel" hidden>
+    <div class="panel-inner">
+      <div class="panel-head">
+        <h1>Settings</h1>
+        <button class="btn panel-done">Done</button>
+      </div>
+
+      <section>
+        <h2>Appearance</h2>
+        <div class="card">
+          <div class="row">
+            <div class="row-text">
+              <div>Theme</div>
+              <div class="row-hint">Colours of the browser. Websites that support it follow along.</div>
+            </div>
+            <div id="set-theme" class="seg" role="radiogroup" aria-label="Theme"></div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Page zoom</div>
+              <div class="row-hint">Default zoom level for web pages.</div>
+            </div>
+            <select id="set-zoom" class="select" aria-label="Page zoom"></select>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Show Home button</div>
+              <div class="row-hint">Adds a Home button next to Reload.</div>
+            </div>
+            <button id="set-home-button" class="switch" role="switch" aria-checked="false" aria-label="Show Home button"></button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Show bookmarks bar</div>
+              <div class="row-hint">Displays your saved bookmarks below the address bar (Ctrl+Shift+B).</div>
+            </div>
+            <button id="set-bookmarks-bar" class="switch" role="switch" data-setting="showBookmarksBar" aria-checked="false" aria-label="Show bookmarks bar"></button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>On startup</h2>
+        <div id="set-startup" class="card" role="radiogroup" aria-label="On startup"></div>
+      </section>
+
+      <section>
+        <h2>Home page and new tabs</h2>
+        <div class="card">
+          <div class="row">
+            <div class="row-text">
+              <div>Home page</div>
+              <div class="row-hint">Leave empty to use your search engine's front page.</div>
+            </div>
+            <input id="set-home-page" class="text" type="text" spellcheck="false" autocomplete="off"
+                   placeholder="example.com" aria-label="Home page address">
+          </div>
+          <div class="row">
+            <div class="row-text"><div>New tabs open</div></div>
+            <div id="set-new-tab" class="seg" role="radiogroup" aria-label="New tabs open"></div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Search engine</h2>
+        <p class="hint">Used when you type words instead of a web address.</p>
+        <div id="set-engine" class="card" role="radiogroup" aria-label="Search engine"></div>
+      </section>
+
+      <section>
+        <h2>Downloads</h2>
+        <div class="card">
+          <div class="row">
+            <div class="row-text">
+              <div>Save files to</div>
+              <div id="set-download-path" class="row-hint path"></div>
+            </div>
+            <button id="set-download-default" class="btn">Use default</button>
+            <button id="set-download-change" class="btn">Change…</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Performance</h2>
+        <div class="card">
+          <div class="row">
+            <div class="row-text">
+              <div>Memory saver</div>
+              <div id="memory-saver-hint" class="row-hint"></div>
+            </div>
+            <div id="set-memory-saver" class="seg" role="radiogroup" aria-label="Memory saver"></div>
+          </div>
+        </div>
+        <p class="hint section-note">Never put to sleep: the tab you're looking at, tabs playing sound, tabs with a download running, and private tabs. Hover over a tab to see how much memory it uses.</p>
+      </section>
+
+      <section>
+        <h2>Privacy</h2>
+        <div class="card">
+          <div class="row">
+            <div class="row-text">
+              <div>Clear browsing data</div>
+              <div class="row-hint">Deletes cookies, cache and site data. You will be signed out of most websites.</div>
+            </div>
+            <button id="clear-data" class="btn">Clear data…</button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Clear browsing history</div>
+              <div class="row-hint">Removes all visited pages from your history list.</div>
+            </div>
+            <button id="set-clear-history" class="btn">Clear history…</button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Block pop-ups</div>
+              <div class="row-hint">Stops pages from opening windows you didn't click for. You can still open a blocked one.</div>
+            </div>
+            <button class="switch" role="switch" data-setting="blockPopups" aria-checked="true" aria-label="Block pop-ups"></button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Tracking prevention</div>
+              <div class="row-hint">Blocks trackers that follow you from site to site. Strict may break some sites.</div>
+            </div>
+            <div id="set-tracking" class="seg" role="radiogroup" aria-label="Tracking prevention"></div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Offer to save passwords</div>
+              <div class="row-hint">Remembers passwords you type into sign-in forms, on this PC only.</div>
+            </div>
+            <button class="switch" role="switch" data-setting="savePasswords" aria-checked="true" aria-label="Offer to save passwords"></button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Autofill forms</div>
+              <div class="row-hint">Suggests addresses and other details you've entered before.</div>
+            </div>
+            <button class="switch" role="switch" data-setting="autofill" aria-checked="true" aria-label="Autofill forms"></button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Protect me from dangerous sites</div>
+              <div class="row-hint">Microsoft Defender SmartScreen warns you before phishing and malware sites, and dangerous downloads.</div>
+            </div>
+            <button class="switch" role="switch" data-setting="safeBrowsing" aria-checked="true" aria-label="Protect me from dangerous sites"></button>
+          </div>
+        </div>
+        <p class="hint section-note">Private tabs (Ctrl+Shift+N) keep no history, cookies or saved tabs after the browser closes.</p>
+      </section>
+
+      <section>
+        <h2>About</h2>
+        <div class="card">
+          <div class="row">
+            <div class="row-text">
+              <div id="about-version">Rust Browser</div>
+              <div id="about-engine" class="row-hint"></div>
+            </div>
+            <button id="reset-settings" class="btn">Reset settings…</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="downloads" class="tab-page" tabindex="-1" hidden>
+    <div class="panel-inner">
+      <div class="panel-head">
+        <div class="dl-page-title">
+          <span class="dl-page-badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>
+          </span>
+          <h1>Downloads</h1>
+        </div>
+        <button id="dl-folder" class="btn">Open folder</button>
+        <button id="dl-clear" class="btn">Clear list</button>
+      </div>
+      <input id="dl-filter" class="text panel-search" type="search" placeholder="Search downloads" aria-label="Search downloads">
+      <p id="dl-empty" class="hint">Files you download will show up here.</p>
+      <div id="dl-list" class="card" hidden></div>
+    </div>
+  </div>
+
+  <div id="bookmarks" class="panel" hidden>
+    <div class="panel-inner">
+      <div class="panel-head">
+        <h1>Bookmarks</h1>
+        <button class="btn panel-done">Done</button>
+      </div>
+      <input id="bm-filter" class="text panel-search" type="search" placeholder="Search bookmarks" aria-label="Search bookmarks">
+      <p id="bm-empty" class="hint">Pages you bookmark with the star button or Ctrl+D will show up here.</p>
+      <div id="bm-list" class="card" hidden></div>
+    </div>
+  </div>
+
+  <div id="history" class="panel" hidden>
+    <div class="panel-inner">
+      <div class="panel-head">
+        <h1>History</h1>
+        <button id="hist-clear" class="btn">Clear history</button>
+        <button class="btn panel-done">Done</button>
+      </div>
+      <input id="hist-filter" class="text panel-search" type="search" placeholder="Search history" aria-label="Search history">
+      <p id="hist-empty" class="hint">Pages you visit will show up here.</p>
+      <div id="hist-list" class="card" hidden></div>
+    </div>
+  </div>
+
+  <div id="close-confirm" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="close-confirm-title">
+      <h2 id="close-confirm-title">Download in progress</h2>
+      <p id="close-confirm-text">Closing the browser now will cancel active downloads.</p>
+      <div class="modal-actions">
+        <button id="close-cancel" class="btn">Keep downloading</button>
+        <button id="close-proceed" class="btn danger">Close anyway</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" role="status"><span id="toast-text"></span><button id="toast-action" hidden></button></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+  const $tabs = $('tabs');
+  const $address = $('address');
+  const $dlList = $('dl-list');
+  const $toast = $('toast');
+  const PANELS = {
+    settings: $('settings'),
+    bookmarks: $('bookmarks'),
+    history: $('history'),
+  };
+  const $downloadsPage = $('downloads');
+  const $downloadsBtn = $('downloads-btn');
+  const CLOSE_ICON = '<svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></svg>';
+  const GLOBE_ICON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.8 12h16.4M12 3.5a11 11 0 0 1 0 17M12 3.5a11 11 0 0 0 0 17"/></svg>';
+  const DOWNLOAD_TAB_ICON = '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>';
+  const FLY_FILE_ICON = '<svg viewBox="0 0 24 24"><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M12 11v6M9.5 14.5 12 17l2.5-2.5"/></svg>';
+  const PRIVATE_ICON = '<svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M7 4h10l1.6 6H5.4zM3 10.6h18v1.5H3zM8 13.2a2.9 2.9 0 1 0 0 5.8 2.9 2.9 0 0 0 0-5.8zm0 1.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM16 13.2a2.9 2.9 0 1 0 0 5.8 2.9 2.9 0 0 0 0-5.8zm0 1.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM10.6 15.4h2.8v1.2h-2.8z"/></svg>';
+  const AUDIO_ICONS =
+    '<svg class="speaker-on" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>' +
+    '<svg class="speaker-off" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/></svg>';
+  const NEW_TAB_ICON = '<svg viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-9 9M19 14v5H5V5h5"/></svg>';
+  const BOOKMARK_STAR_ICON = '<svg viewBox="0 0 24 24"><path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8l-5.8 3.1 1.1-6.5L2.6 9.8l6.5-.9z"/></svg>';
+
+  let initData = { engines: [], zoomLevels: [], about: {} };
+  let state = {
+    tabs: [], active: null, split: null, maximized: false, panel: null, confirmClose: false,
+    settings: {}, bookmarked: false, statusText: '', notice: null,
+    downloads: [], downloadsActive: 0, downloadsProgress: null, downloadsUnseen: false,
+    downloadsAddedSeq: 0, bookmarks: [], history: [],
+  };
+  let editing = false;
+  let lastRenderedTabUrl = '';
+  let cachedBookmarks = [];
+  let bookmarksRev = 0;
+  let renderedBookmarksRev = -1;
+  let dragState = null;
+  let lastDownloadsAddedSeq = null;
+  let dlAddedTimer = null;
+
+  const send = (msg) => window.ipc.postMessage(JSON.stringify(msg));
+  const patchSettings = (patch) => send({ type: 'updateSettings', patch });
+  const displayUrl = (url) => (!url || url === 'about:blank' ? '' : url);
+  const displayTitle = (tab) => tab.title || displayUrl(tab.url) || 'New Tab';
+  const activeTab = () => state.tabs.find((t) => t.id === state.active);
+
+  // Makes an element. Text always goes in through textContent, never as HTML,
+  // because titles, file names and URLs come from web pages.
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function removeAnimated(node) {
+    const parent = node.parentElement;
+    node.classList.remove('active');
+    node.classList.add('closing');
+    const remove = () => {
+      if (!node.isConnected) return;
+      node.remove();
+      if (parent === $dlList && !$dlList.children.length) $dlList.hidden = true;
+    };
+    node.addEventListener('transitionend', (e) => {
+      if (e.target === node && (e.propertyName === 'max-width' || e.propertyName === 'max-height')) remove();
+    });
+    setTimeout(remove, 320);
+  }
+
+  function reconcile(parent, items, create, update) {
+    const existing = new Map();
+    const live = [];
+    for (const child of parent.children) {
+      if (child.classList.contains('closing')) continue;
+      existing.set(child.dataset.id, child);
+      live.push(child);
+    }
+    items.forEach((item, index) => {
+      const key = String(item.id);
+      let node = existing.get(key);
+      if (node) existing.delete(key);
+      else { node = create(item); node.dataset.id = key; }
+      update(node, item);
+      if (live[index] !== node) {
+        const from = live.indexOf(node);
+        if (from !== -1) live.splice(from, 1);
+        parent.insertBefore(node, live[index] || null);
+        live.splice(index, 0, node);
+      }
+    });
+    existing.forEach(removeAnimated);
+  }
+
+  // ---- tab hover card ------------------------------------------------------
+  // The card itself is drawn by Rust in a small floating window (this view
+  // ends at the toolbar). While the mouse rests on a tab, its position is
+  // sent once a second; Rust answers with the page's live memory use.
+
+  let hoverTimer = null;   // waiting to show the first card
+  let hoverPoll = null;    // card showing: refresh every second
+  let leaveTimer = null;   // just left a tab: maybe moving to the next one
+
+  function sendHover(id, node) {
+    if (!node.isConnected || node.classList.contains('closing') || (dragState && dragState.active)) {
+      endTabHover();
+      return;
+    }
+    const r = node.getBoundingClientRect();
+    send({ type: 'tabHover', id, x: r.left, y: r.bottom });
+  }
+  function startPolling(id, node) {
+    sendHover(id, node);
+    hoverPoll = setInterval(() => sendHover(id, node), 1000);
+  }
+  function onTabEnter(id, node) {
+    clearTimeout(leaveTimer);
+    leaveTimer = null;
+    if (dragState && dragState.active) return;
+    const showing = hoverPoll != null;
+    clearTimeout(hoverTimer);
+    clearInterval(hoverPoll);
+    hoverTimer = hoverPoll = null;
+    // Moving from tab to tab keeps the card up; the first one waits a moment
+    // so it doesn't flash while the mouse just passes over the tabs.
+    if (showing) startPolling(id, node);
+    else hoverTimer = setTimeout(() => { hoverTimer = null; startPolling(id, node); }, 500);
+  }
+  function onTabLeave() {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+    if (hoverPoll != null) leaveTimer = setTimeout(endTabHover, 120);
+  }
+  function endTabHover() {
+    const showing = hoverPoll != null;
+    clearTimeout(hoverTimer);
+    clearTimeout(leaveTimer);
+    clearInterval(hoverPoll);
+    hoverTimer = hoverPoll = leaveTimer = null;
+    if (showing) send({ type: 'tabHoverEnd' });
+  }
+
+  // ---- tabs --------------------------------------------------------------
+
+  function createTab(tab) {
+    const id = tab.id;
+    const node = el('div', 'tab');
+    node.setAttribute('role', 'tab');
+    const globe = el('span', 'tab-globe');
+    globe.innerHTML = GLOBE_ICON; // static markup
+
+    const dlIcon = el('span', 'tab-dl');
+    dlIcon.innerHTML = DOWNLOAD_TAB_ICON; // static markup
+    dlIcon.hidden = true;
+
+    const fav = el('img', 'favicon');
+    fav.alt = '';
+    fav.hidden = true;
+    fav.addEventListener('error', () => {
+      fav.dataset.failedSrc = fav.getAttribute('src') || '';
+      fav.hidden = true;
+      globe.hidden = false;
+    });
+
+    const close = el('button', 'close icon-btn');
+    close.title = 'Close tab (Ctrl+W)';
+    close.setAttribute('aria-label', 'Close tab');
+    close.innerHTML = CLOSE_ICON; // static markup, never page-controlled
+
+    close.addEventListener('pointerdown', (e) => e.stopPropagation());
+    close.addEventListener('mousedown', (e) => e.stopPropagation());
+    close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      send({ type: 'closeTab', id });
+    });
+
+    const privateIcon = el('span', 'private-icon');
+    privateIcon.innerHTML = PRIVATE_ICON; // static markup
+    privateIcon.title = 'Private tab';
+
+    const audio = el('button', 'audio icon-btn');
+    audio.innerHTML = AUDIO_ICONS; // static markup
+    audio.addEventListener('pointerdown', (e) => e.stopPropagation());
+    audio.addEventListener('mousedown', (e) => e.stopPropagation());
+    audio.addEventListener('click', (e) => {
+      e.stopPropagation();
+      send({ type: 'toggleMute', id });
+    });
+
+    node.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      endTabHover();
+      send({ type: 'tabMenu', id, x: e.clientX, y: e.clientY });
+    });
+    node.addEventListener('mouseenter', () => onTabEnter(id, node));
+    node.addEventListener('mouseleave', onTabLeave);
+    node.addEventListener('pointerdown', (e) => {
+      endTabHover();
+      if (e.button === 0) {
+        if (e.target.closest('.close, .audio')) return;
+        const clickedTab = state.tabs.find((t) => t.id === id);
+        const isDownloads = !!(clickedTab && clickedTab.url === 'about:downloads');
+        const wasActive = id === state.active;
+        const deferredSelect = !wasActive && isDownloads;
+        try { node.setPointerCapture(e.pointerId); } catch {}
+        if (!wasActive && !deferredSelect) {
+          send({ type: 'selectTab', id, focus: false });
+        }
+        const liveNodes = [...$tabs.children].filter((n) => !n.classList.contains('closing'));
+        const rects = liveNodes.map((n) => {
+          const r = n.getBoundingClientRect();
+          return { node: n, left: r.left, width: r.width, centerX: r.left + r.width / 2 };
+        });
+        const fromIndex = liveNodes.indexOf(node);
+        if (fromIndex !== -1) {
+          dragState = {
+            id,
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            active: false,
+            node,
+            rects,
+            fromIndex,
+            toIndex: fromIndex,
+            deferredSelect,
+            isDownloads,
+          };
+        }
+      } else if (e.button === 1) {
+        e.preventDefault(); // no autoscroll cursor
+      }
+    });
+    node.addEventListener('auxclick', (e) => {
+      if (e.button === 1) send({ type: 'closeTab', id });
+    });
+
+    node.append(el('span', 'spinner'), privateIcon, dlIcon, globe, fav, el('span', 'title'), audio, close);
+    return node;
+  }
+
+  function updateTab(node, tab) {
+    const isActive = tab.id === state.active;
+    const isDl = tab.url === 'about:downloads';
+    const split = state.split;
+    node.classList.toggle('active', isActive);
+    node.classList.toggle('split-left', !!(split && split[0] === tab.id));
+    node.classList.toggle('split-right', !!(split && split[1] === tab.id));
+    node.classList.toggle('loading', !!tab.loading);
+    node.classList.toggle('private', !!tab.private);
+    node.classList.toggle('audible', !!tab.audible);
+    node.classList.toggle('muted', !!tab.muted);
+    node.classList.toggle('sleeping', !!tab.sleeping && !isActive);
+    const $audio = node.querySelector('.audio');
+    const audioLabel = tab.muted ? 'Unmute tab' : 'Mute tab';
+    if ($audio.title !== audioLabel) {
+      $audio.title = audioLabel;
+      $audio.setAttribute('aria-label', audioLabel);
+    }
+    node.setAttribute('aria-selected', String(isActive));
+    const $fav = node.querySelector('.favicon');
+    const $globe = node.querySelector('.tab-globe');
+    const $dlIcon = node.querySelector('.tab-dl');
+    const safeFavicon = tab.favicon
+      && (tab.favicon.startsWith('https://') || tab.favicon.startsWith('http://') || tab.favicon.startsWith('data:'));
+    if (isDl) {
+      $fav.hidden = true;
+      $globe.hidden = true;
+      $dlIcon.hidden = false;
+    } else if (safeFavicon) {
+      if ($fav.getAttribute('src') !== tab.favicon) {
+        delete $fav.dataset.failedSrc;
+        $fav.src = tab.favicon;
+      }
+      const failed = $fav.dataset.failedSrc === tab.favicon;
+      $fav.hidden = failed;
+      $globe.hidden = !failed;
+      $dlIcon.hidden = true;
+    } else {
+      delete $fav.dataset.failedSrc;
+      $fav.hidden = true;
+      $globe.hidden = false;
+      $dlIcon.hidden = true;
+    }
+    const text = displayTitle(tab);
+    const $title = node.querySelector('.title');
+    if ($title.textContent !== text) $title.textContent = text;
+    // No `title` tooltip: the hover card (with memory use) shows the title.
+    if (node.getAttribute('aria-label') !== text) node.setAttribute('aria-label', text);
+  }
+
+  // Pointer-based tab reordering avoids WebView2 HTML5 drag interception and
+  // keeps Chrome capture intact while sliding neighboring tabs smoothly.
+  function finishTabDrag(commit) {
+    if (!dragState) return;
+    const {
+      id, pointerId, active, node, rects, fromIndex, toIndex, deferredSelect, isDownloads,
+    } = dragState;
+    dragState = null;
+
+    const reordered = commit && active && toIndex !== fromIndex;
+    const beforeLeft = reordered ? node.getBoundingClientRect().left : 0;
+
+    for (const r of rects) {
+      r.node.style.transition = 'none';
+      r.node.classList.remove('sliding');
+      if (r.node !== node || reordered || !active || !commit) r.node.style.transform = '';
+    }
+    node.classList.remove('dragging');
+    if (reordered) {
+      const siblings = [...$tabs.children].filter((n) => n !== node && !n.classList.contains('closing'));
+      $tabs.insertBefore(node, siblings[toIndex] || null);
+      void $tabs.offsetWidth;
+      const afterLeft = node.getBoundingClientRect().left;
+      node.style.transform = `translateX(${beforeLeft - afterLeft}px)`;
+      void node.offsetWidth;
+      for (const r of rects) r.node.style.transition = '';
+      node.style.transform = '';
+    } else if (commit && active) {
+      // Smoothly glide the tab back into its original slot without snapping.
+      void $tabs.offsetWidth;
+      for (const r of rects) r.node.style.transition = '';
+      node.style.transform = '';
+    } else {
+      void $tabs.offsetWidth;
+      for (const r of rects) r.node.style.transition = '';
+    }
+
+    try {
+      if (node.hasPointerCapture(pointerId)) node.releasePointerCapture(pointerId);
+    } catch {}
+    if (reordered) {
+      send({ type: 'reorderTab', id, toIndex });
+    }
+    if (commit) {
+      if (node.isConnected && $tabs.scrollWidth > $tabs.clientWidth) {
+        node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+      if (deferredSelect || (state.panel && !active)) {
+        send({ type: 'selectTab', id, focus: true });
+      } else if (!isDownloads && !state.panel) {
+        send({ type: 'focusContent' });
+      }
+    }
+  }
+  document.addEventListener('pointermove', (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    if ((e.buttons & 1) === 0) {
+      finishTabDrag(true);
+      return;
+    }
+    const dx = e.clientX - dragState.startX;
+    if (!dragState.active) {
+      if (dragState.rects.length <= 1 || Math.abs(dx) < 4) return;
+      dragState.active = true;
+      dragState.node.classList.add('dragging');
+      for (const r of dragState.rects) {
+        if (r.node !== dragState.node) r.node.classList.add('sliding');
+      }
+    }
+    const { rects, fromIndex } = dragState;
+    const myRect = rects[fromIndex];
+    const minDx = rects[0].left - myRect.left;
+    const maxDx = (rects[rects.length - 1].left + rects[rects.length - 1].width) - (myRect.left + myRect.width);
+    const clampedDx = Math.max(minDx, Math.min(maxDx, dx));
+    dragState.node.style.transform = `translateX(${clampedDx}px)`;
+
+    const dragCenter = myRect.centerX + clampedDx;
+    let toIndex = 0;
+    for (let i = 0; i < rects.length; i++) {
+      if (i !== fromIndex && rects[i].centerX < dragCenter) toIndex++;
+    }
+    dragState.toIndex = toIndex;
+
+    for (let i = 0; i < rects.length; i++) {
+      if (i === fromIndex) continue;
+      if (fromIndex < toIndex && i > fromIndex && i <= toIndex) {
+        const shift = rects[i - 1].left - rects[i].left;
+        rects[i].node.style.transform = `translateX(${shift}px)`;
+      } else if (toIndex < fromIndex && i >= toIndex && i < fromIndex) {
+        const shift = rects[i + 1].left - rects[i].left;
+        rects[i].node.style.transform = `translateX(${shift}px)`;
+      } else {
+        rects[i].node.style.transform = '';
+      }
+    }
+  });
+  document.addEventListener('pointerup', (e) => {
+    if (dragState && e.pointerId === dragState.pointerId) finishTabDrag(true);
+  });
+  document.addEventListener('pointercancel', (e) => {
+    if (dragState && e.pointerId === dragState.pointerId) finishTabDrag(false);
+  });
+  window.addEventListener('blur', () => finishTabDrag(false));
+  $tabs.addEventListener('wheel', (e) => {
+    if ($tabs.scrollWidth > $tabs.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      $tabs.scrollLeft += e.deltaY;
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  // Fade the side(s) of the tab strip that have tabs scrolled out of view.
+  function updateTabOverflow() {
+    const max = $tabs.scrollWidth - $tabs.clientWidth;
+    $tabs.classList.toggle('more-left', max > 1 && $tabs.scrollLeft > 1);
+    $tabs.classList.toggle('more-right', max > 1 && $tabs.scrollLeft < max - 1);
+  }
+  $tabs.addEventListener('scroll', updateTabOverflow, { passive: true });
+  window.addEventListener('resize', updateTabOverflow);
+
+  // ---- settings ----------------------------------------------------------
+
+  function choiceGroup(container, key, choices, segmented) {
+    for (const [value, label] of choices) {
+      const wrap = el('label', segmented ? null : 'option');
+      const input = el('input');
+      input.type = 'radio';
+      input.name = key;
+      input.value = value;
+      input.addEventListener('change', () => {
+        if (input.checked) patchSettings({ [key]: value });
+      });
+      wrap.append(input, el('span', null, label));
+      container.append(wrap);
+    }
+  }
+  function setChoice(container, value) {
+    for (const input of container.querySelectorAll('input')) input.checked = input.value === value;
+  }
+
+  choiceGroup($('set-theme'), 'theme', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], true);
+  choiceGroup($('set-new-tab'), 'newTabPage', [['blank', 'New tab page'], ['homePage', 'Home page']], true);
+  choiceGroup($('set-startup'), 'startup', [
+    ['homePage', 'Open the home page'],
+    ['continue', 'Continue where you left off'],
+    ['newTab', 'Open a new tab'],
+  ], false);
+
+  choiceGroup($('set-memory-saver'), 'memorySaver',
+    [['off', 'Off'], ['balanced', 'Balanced'], ['maximum', 'Maximum']], true);
+  const MEMORY_SAVER_HINTS = {
+    off: 'Tabs in the background keep running and keep their memory.',
+    balanced: 'Freezes tabs after 30 seconds in the background and frees their memory after 30 minutes. A tab put to sleep reloads when you open it and loses its back/forward list.',
+    maximum: 'Freezes tabs after 10 seconds in the background and frees their memory after 5 minutes. A tab put to sleep reloads when you open it and loses its back/forward list.',
+  };
+
+  choiceGroup($('set-tracking'), 'trackingPrevention',
+    [['off', 'Off'], ['basic', 'Basic'], ['balanced', 'Balanced'], ['strict', 'Strict']], true);
+
+  // On/off switches for simple yes/no settings, named by data-setting.
+  for (const sw of document.querySelectorAll('.switch[data-setting]')) {
+    sw.addEventListener('click', () => {
+      const key = sw.dataset.setting;
+      patchSettings({ [key]: !state.settings[key] });
+    });
+  }
+
+  $('set-zoom').addEventListener('change', (e) => patchSettings({ zoomPercent: Number(e.target.value) }));
+  $('set-home-button').addEventListener('click', () => patchSettings({ showHomeButton: !state.settings.showHomeButton }));
+  $('set-home-page').addEventListener('change', (e) => patchSettings({ homePage: e.target.value }));
+  $('set-home-page').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+  $('set-download-change').addEventListener('click', () => send({ type: 'chooseDownloadFolder' }));
+  $('set-download-default').addEventListener('click', () => send({ type: 'resetDownloadFolder' }));
+
+  function confirmButton(button, confirmLabel, action) {
+    const label = button.textContent;
+    let timer = null;
+    const disarm = () => {
+      clearTimeout(timer);
+      timer = null;
+      button.textContent = label;
+      button.classList.remove('danger');
+    };
+    button.addEventListener('click', () => {
+      if (timer) { disarm(); action(); return; }
+      button.textContent = confirmLabel;
+      button.classList.add('danger');
+      timer = setTimeout(disarm, 4000);
+    });
+    button.addEventListener('blur', disarm);
+  }
+  confirmButton($('clear-data'), 'Click again to clear', () => send({ type: 'clearBrowsingData' }));
+  confirmButton($('set-clear-history'), 'Click again to clear', () => send({ type: 'clearHistory' }));
+  confirmButton($('hist-clear'), 'Click again to clear', () => send({ type: 'clearHistory' }));
+  confirmButton($('reset-settings'), 'Click again to reset', () => send({ type: 'resetSettings' }));
+
+  function renderSettings() {
+    const s = state.settings || {};
+
+    const $engine = $('set-engine');
+    if (!$engine.children.length && initData.engines.length) {
+      choiceGroup($engine, 'searchEngine', initData.engines.map((e) => [e.id, e.name]), false);
+    }
+    const $zoom = $('set-zoom');
+    if (!$zoom.children.length) {
+      for (const level of initData.zoomLevels || []) {
+        const option = el('option', null, level + '%');
+        option.value = String(level);
+        $zoom.append(option);
+      }
+    }
+
+    setChoice($('set-theme'), s.theme);
+    setChoice($('set-startup'), s.startup);
+    setChoice($('set-new-tab'), s.newTabPage);
+    setChoice($engine, s.searchEngine);
+    setChoice($('set-tracking'), s.trackingPrevention);
+    setChoice($('set-memory-saver'), s.memorySaver);
+    $('memory-saver-hint').textContent = MEMORY_SAVER_HINTS[s.memorySaver] || '';
+    for (const sw of document.querySelectorAll('.switch[data-setting]')) {
+      sw.setAttribute('aria-checked', String(!!s[sw.dataset.setting]));
+    }
+    $zoom.value = String(s.zoomPercent);
+    $('set-home-button').setAttribute('aria-checked', String(!!s.showHomeButton));
+    if (document.activeElement !== $('set-home-page')) $('set-home-page').value = s.homePage || '';
+    $('set-download-path').textContent = s.downloadDir || 'Your Windows Downloads folder';
+    $('set-download-default').hidden = !s.downloadDir;
+
+    const about = initData.about || {};
+    $('about-version').textContent = 'Rust Browser ' + (about.version || '');
+    const parts = [];
+    if (about.engine) parts.push('Web engine: WebView2 ' + about.engine + ' (Chromium)');
+    if (state.refreshHz) {
+      parts.push('Display: ' + state.refreshHz + ' Hz' + (state.refreshHz >= 90 ? ' (high-refresh-rate mode)' : ''));
+    }
+    $('about-engine').textContent = parts.join(' · ');
+  }
+
+  // ---- downloads ---------------------------------------------------------
+
+  function formatBytes(bytes) {
+    if (!(bytes > 0)) return '0 KB';
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let value = bytes / 1024;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return (value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)) + ' ' + units[unit];
+  }
+
+  function hostOf(url) {
+    try {
+      const u = new URL(url);
+      return u.protocol === 'http:' || u.protocol === 'https:' ? u.host : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function downloadStatus(d) {
+    let text;
+    if (d.state === 'inProgress') {
+      text = d.total > 0 ? formatBytes(d.received) + ' of ' + formatBytes(d.total) : formatBytes(d.received);
+    } else if (d.state === 'completed') {
+      text = d.missing ? 'File moved or deleted' : 'Done, ' + formatBytes(d.received > 0 ? d.received : d.total);
+    } else if (d.state === 'cancelled') {
+      text = 'Cancelled';
+    } else {
+      text = 'Failed';
+    }
+    const host = hostOf(d.url);
+    return host ? text + ' · ' + host : text;
+  }
+
+  function createDownload() {
+    const node = el('div', 'dl');
+    const main = el('div', 'dl-main');
+    const bar = el('div', 'dl-bar');
+    bar.append(el('div', 'dl-fill'));
+    main.append(el('div', 'dl-name'), el('div', 'dl-status'), bar);
+
+    const actions = el('div', 'dl-actions');
+    const button = (act, label) => {
+      const b = el('button', 'btn', label);
+      b.dataset.act = act;
+      return b;
+    };
+    const remove = el('button', 'icon-btn');
+    remove.dataset.act = 'remove';
+    remove.title = 'Remove from list';
+    remove.setAttribute('aria-label', 'Remove from list');
+    remove.innerHTML = CLOSE_ICON; // static markup
+    actions.append(button('open', 'Open'), button('show', 'Show in folder'), button('cancel', 'Cancel'), remove);
+
+    node.append(main, actions);
+    return node;
+  }
+
+  function updateDownload(node, d) {
+    const running = d.state === 'inProgress';
+    const usable = d.state === 'completed' && !d.missing;
+    for (const name of ['inProgress', 'completed', 'failed', 'cancelled']) node.classList.toggle(name, d.state === name);
+    node.classList.toggle('missing', !!d.missing);
+
+    const $name = node.querySelector('.dl-name');
+    if ($name.textContent !== d.name) { $name.textContent = d.name; $name.title = d.name; }
+    const status = downloadStatus(d);
+    const $status = node.querySelector('.dl-status');
+    if ($status.textContent !== status) $status.textContent = status;
+
+    const $bar = node.querySelector('.dl-bar');
+    $bar.hidden = !running;
+    $bar.classList.toggle('unknown', running && !(d.total > 0));
+    node.querySelector('.dl-fill').style.width =
+      running && d.total > 0 ? Math.min(100, (d.received / d.total) * 100).toFixed(1) + '%' : '';
+
+    const show = { open: usable, show: usable, cancel: running, remove: !running };
+    for (const b of node.querySelectorAll('[data-act]')) b.hidden = !show[b.dataset.act];
+  }
+
+  function renderDownloads() {
+    const all = state.downloads || [];
+    const q = ($('dl-filter').value || '').trim().toLowerCase();
+    const list = q
+      ? all.filter((d) => d.name.toLowerCase().includes(q) || d.url.toLowerCase().includes(q))
+      : all;
+    $('dl-empty').textContent = all.length === 0 ? 'Files you download will show up here.' : 'No matching downloads.';
+    $('dl-empty').hidden = list.length > 0;
+    $dlList.hidden = list.length === 0 && !$dlList.querySelector('.closing');
+    $('dl-clear').hidden = !all.some((d) => d.state !== 'inProgress');
+    reconcile($dlList, list, createDownload, updateDownload);
+  }
+  $('dl-filter').addEventListener('input', renderDownloads);
+
+  // ---- bookmarks & history -----------------------------------------------
+
+  function renderEntries(container, emptyEl, items, query, removeType) {
+    const q = query.trim().toLowerCase();
+    const filtered = q
+      ? items.filter((it) => it.title.toLowerCase().includes(q) || it.url.toLowerCase().includes(q))
+      : items;
+    emptyEl.hidden = filtered.length > 0;
+    container.hidden = filtered.length === 0;
+    container.textContent = '';
+
+    for (const item of filtered) {
+      const row = el('div', 'entry-row');
+      const link = el('button', 'entry-link');
+      link.append(el('div', 'entry-title', item.title || item.url), el('div', 'entry-url', item.url));
+      link.addEventListener('click', () => send({ type: 'openUrl', url: item.url, newTab: false }));
+      link.addEventListener('auxclick', (e) => {
+        if (e.button === 1) send({ type: 'openUrl', url: item.url, newTab: true });
+      });
+
+      const actions = el('div', 'entry-actions');
+      const openTab = el('button', 'icon-btn');
+      openTab.title = 'Open in new tab';
+      openTab.setAttribute('aria-label', 'Open in new tab');
+      openTab.innerHTML = NEW_TAB_ICON;
+      openTab.addEventListener('click', () => send({ type: 'openUrl', url: item.url, newTab: true }));
+
+      const del = el('button', 'icon-btn');
+      del.title = 'Remove';
+      del.setAttribute('aria-label', 'Remove');
+      del.innerHTML = CLOSE_ICON;
+      del.addEventListener('click', () => send({ type: removeType, url: item.url }));
+
+      actions.append(openTab, del);
+      row.append(link, actions);
+      container.append(row);
+    }
+  }
+
+  function renderBookmarksBar() {
+    const show = !!(state.settings && state.settings.showBookmarksBar);
+    document.body.classList.toggle('bookmarks-bar', show);
+    const $bar = $('bookmarks-bar');
+    $bar.hidden = !show;
+    if (!show) return;
+
+    if (renderedBookmarksRev === bookmarksRev) return;
+    renderedBookmarksRev = bookmarksRev;
+    const items = cachedBookmarks;
+
+    const $list = $('bookmarks-bar-list');
+    $list.textContent = '';
+    $list.hidden = items.length === 0;
+    $('bookmarks-bar-empty').hidden = items.length > 0;
+
+    for (const item of items) {
+      const chip = el('button', 'bm-chip');
+      chip.innerHTML = BOOKMARK_STAR_ICON; // static markup
+      const label = item.title || hostOf(item.url) || item.url;
+      chip.append(el('span', null, label));
+      chip.title = item.title ? item.title + '\n' + item.url : item.url;
+      chip.addEventListener('mousedown', (e) => {
+        if (e.button === 1) e.preventDefault();
+      });
+      chip.addEventListener('click', () => send({ type: 'openUrl', url: item.url, newTab: false }));
+      chip.addEventListener('auxclick', (e) => {
+        if (e.button === 1) send({ type: 'openUrl', url: item.url, newTab: true });
+      });
+      $list.append(chip);
+    }
+  }
+
+  function renderBookmarks() {
+    renderEntries($('bm-list'), $('bm-empty'), cachedBookmarks, $('bm-filter').value, 'removeBookmark');
+  }
+
+  function renderHistory() {
+    const items = state.history || [];
+    $('hist-clear').hidden = items.length === 0;
+    renderEntries($('hist-list'), $('hist-empty'), items, $('hist-filter').value, 'removeHistory');
+  }
+
+  $('bm-filter').addEventListener('input', renderBookmarks);
+  $('hist-filter').addEventListener('input', renderHistory);
+
+  // ---- short messages ----------------------------------------------------
+
+  let shownNotice = null;
+  let toastTimer = null;
+  function hideToast() {
+    clearTimeout(toastTimer);
+    $toast.classList.remove('show');
+  }
+  $toast.addEventListener('click', (e) => {
+    if (!e.target.closest('#toast-action')) hideToast();
+  });
+  function renderNotice() {
+    const notice = state.notice;
+    if (!notice || notice.id === shownNotice) return;
+    shownNotice = notice.id;
+    $('toast-text').textContent = notice.text;
+    const $action = $('toast-action');
+    $action.hidden = !notice.action;
+    $action.textContent = notice.action || '';
+    $action.onclick = () => {
+      send({ type: 'noticeAction', id: notice.id });
+      hideToast();
+    };
+    $toast.classList.toggle('error', !!notice.error);
+    $toast.classList.add('show');
+    clearTimeout(toastTimer);
+    // Notices with a button stay longer, so there's time to use it.
+    toastTimer = setTimeout(hideToast, notice.action ? 8000 : 3500);
+  }
+
+  // The kind of page shown at the left end of the address bar.
+  function securityKind(url) {
+    if (editing || !url || url === 'about:blank') return 'search';
+    const lower = url.toLowerCase();
+    if (lower.startsWith('https://')) return 'secure';
+    if (lower.startsWith('file:')) return 'file';
+    if (lower.startsWith('http://')) {
+      // Your own PC (e.g. a local test server) isn't "the internet".
+      const local = /^http:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])([:/]|$)/.test(lower);
+      return local ? 'none' : 'insecure';
+    }
+    return 'none';
+  }
+  const SECURITY_TITLES = {
+    search: 'Search or type a web address',
+    secure: 'Connection is secure',
+    insecure: 'Your connection to this site is not secure',
+    file: 'A file on this PC',
+    none: '',
+  };
+  function renderSecurity(tab) {
+    const kind = securityKind(tab ? tab.url : '');
+    const $sec = $('security');
+    $sec.hidden = kind === 'none';
+    if ($sec.dataset.kind !== kind) {
+      $sec.dataset.kind = kind;
+      $sec.title = SECURITY_TITLES[kind];
+    }
+    $('private-badge').hidden = !(tab && tab.private);
+  }
+
+  function updateAddressClear() {
+    const focused = document.activeElement === $address;
+    $('address-clear').hidden = !(focused && $address.value.length > 0);
+  }
+
+  function updateAddressPlaceholder() {
+    const engineId = state.settings && state.settings.searchEngine;
+    const engine = (initData.engines || []).find((e) => e.id === engineId);
+    const next = engine ? 'Search ' + engine.name + ' or enter address' : 'Search or enter address';
+    if ($address.placeholder !== next) $address.placeholder = next;
+  }
+
+  // ---- everything --------------------------------------------------------
+
+  function init(data) {
+    initData = data || initData;
+    updateAddressPlaceholder();
+    renderSettings();
+  }
+
+  function setSuggestions(items) {
+    const list = $('address-suggestions');
+    list.textContent = '';
+    for (const item of items || []) {
+      const opt = document.createElement('option');
+      opt.value = item.url;
+      opt.label = (item.bookmarked ? '★ ' : '') + (item.title || item.url);
+      list.append(opt);
+    }
+  }
+
+  function triggerDownloadsAddedAnimation() {
+    $downloadsBtn.classList.remove('added');
+    void $downloadsBtn.offsetWidth;
+    $downloadsBtn.classList.add('added');
+    clearTimeout(dlAddedTimer);
+    dlAddedTimer = setTimeout(() => $downloadsBtn.classList.remove('added'), 900);
+  }
+
+  function spawnDownloadBurst(cx, cy) {
+    const count = 7;
+    for (let i = 0; i < count; i++) {
+      const spark = el('div', 'dl-spark');
+      spark.style.left = '0px';
+      spark.style.top = '0px';
+      document.body.append(spark);
+      const angle = (Math.PI * 2 * i) / count + 0.3;
+      const dist = 16 + (i % 2) * 8;
+      const dx = cx + Math.cos(angle) * dist;
+      const dy = cy + Math.sin(angle) * dist;
+      const anim = spark.animate(
+        [
+          { transform: `translate(${cx}px, ${cy}px) translate(-50%, -50%) scale(1)`, opacity: 0.95 },
+          { transform: `translate(${dx}px, ${dy}px) translate(-50%, -50%) scale(0.2)`, opacity: 0 },
+        ],
+        { duration: 420, easing: 'cubic-bezier(0.15, 0.85, 0.35, 1)', fill: 'forwards' },
+      );
+      const cleanup = () => spark.remove();
+      anim.addEventListener('finish', cleanup);
+      setTimeout(cleanup, 500);
+    }
+  }
+
+  function spawnFlyingDownload(filename) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      triggerDownloadsAddedAnimation();
+      return;
+    }
+    const targetRect = $downloadsBtn.getBoundingClientRect();
+    if (!targetRect.width) {
+      triggerDownloadsAddedAnimation();
+      return;
+    }
+    const tx = targetRect.left + targetRect.width / 2;
+    const ty = targetRect.top + targetRect.height / 2;
+    const chromeHeight = document.body.classList.contains('bookmarks-bar') ? 120 : 88;
+    const sx = Math.max(82, Math.min(tx, window.innerWidth - 82));
+    const sy = document.body.classList.contains('full')
+      ? Math.min(window.innerHeight - 48, ty + 150)
+      : chromeHeight + 20;
+    const dy = sy - ty;
+    const duration = 560;
+
+    const launch = (cls, delay, keyframes) => {
+      const node = el('div', cls);
+      node.style.left = '0px';
+      node.style.top = '0px';
+      document.body.append(node);
+      const anim = node.animate(keyframes, {
+        duration,
+        delay,
+        easing: 'cubic-bezier(0.22, 0.85, 0.32, 1)',
+        fill: 'forwards',
+      });
+      const cleanup = () => node.remove();
+      anim.addEventListener('finish', cleanup);
+      setTimeout(cleanup, duration + delay + 140);
+      return node;
+    };
+
+    const fileNode = launch('dl-fly', 0, [
+      { transform: `translate(${sx}px, ${sy}px) translate(-50%, -50%) scale(0.82)`, opacity: 0.15 },
+      { transform: `translate(${sx}px, ${sy - dy * 0.45}px) translate(-50%, -50%) scale(1.06)`, opacity: 1, offset: 0.34 },
+      { transform: `translate(${tx}px, ${ty + dy * 0.18}px) translate(-50%, -50%) scale(0.85)`, opacity: 1, offset: 0.76 },
+      { transform: `translate(${tx}px, ${ty}px) translate(-50%, -50%) scale(0.32)`, opacity: 0.92, offset: 0.95 },
+      { transform: `translate(${tx}px, ${ty}px) translate(-50%, -50%) scale(0.12)`, opacity: 0 },
+    ]);
+    const iconBox = el('span', 'dl-fly-icon');
+    iconBox.innerHTML = FLY_FILE_ICON; // static markup
+    fileNode.append(iconBox);
+    if (filename) fileNode.append(el('span', 'dl-fly-name', filename));
+
+    for (const [idx, delay] of [[0, 45], [1, 95]]) {
+      const s = idx === 0 ? 0.85 : 0.55;
+      launch('dl-fly-trail', delay, [
+        { transform: `translate(${sx}px, ${sy}px) translate(-50%, -50%) scale(0.3)`, opacity: 0 },
+        { transform: `translate(${sx + (tx - sx) * 0.5}px, ${sy - dy * 0.52}px) translate(-50%, -50%) scale(${s})`, opacity: 0.55, offset: 0.52 },
+        { transform: `translate(${tx}px, ${ty}px) translate(-50%, -50%) scale(0.15)`, opacity: 0 },
+      ]);
+    }
+
+    setTimeout(() => {
+      triggerDownloadsAddedAnimation();
+      spawnDownloadBurst(tx, ty);
+    }, duration - 70);
+  }
+
+  // Called from Rust with the full state every time something changes.
+  function render(next) {
+    if (Array.isArray(next.bookmarks)) {
+      cachedBookmarks = next.bookmarks;
+      bookmarksRev += 1;
+    }
+    const activeChanged = next.active !== state.active;
+    const previousPanel = state.panel;
+    state = next;
+    const nextTab = activeTab();
+    const nextUrl = nextTab ? displayUrl(nextTab.url) : '';
+    const activeFocused = document.activeElement === $address;
+    if (activeChanged || (editing && !activeFocused && nextUrl !== lastRenderedTabUrl)) {
+      editing = false;
+    }
+    lastRenderedTabUrl = nextUrl;
+
+    if (dragState) {
+      const sameSet = dragState.rects.length === state.tabs.length
+        && state.tabs.every((t) => $tabs.querySelector(`.tab[data-id="${t.id}"]`));
+      if (sameSet) {
+        for (const t of state.tabs) {
+          const n = $tabs.querySelector(`.tab[data-id="${t.id}"]`);
+          if (n) updateTab(n, t);
+        }
+      } else {
+        finishTabDrag(false);
+        reconcile($tabs, state.tabs, createTab, updateTab);
+      }
+    } else {
+      reconcile($tabs, state.tabs, createTab, updateTab);
+    }
+    if (activeChanged && state.active != null && !dragState) {
+      const activeNode = $tabs.querySelector(`.tab[data-id="${state.active}"]`);
+      if (activeNode) activeNode.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+    // Tabs animate in and out, so check the overflow fade once they settle too.
+    updateTabOverflow();
+    setTimeout(updateTabOverflow, 260);
+
+    document.body.classList.toggle('maximized', !!state.maximized);
+    const maxLabel = state.maximized ? 'Restore' : 'Maximize';
+    if ($('win-max').title !== maxLabel) {
+      $('win-max').title = maxLabel;
+      $('win-max').setAttribute('aria-label', maxLabel);
+    }
+
+    const tab = activeTab();
+    const downloadsTabActive = !!(tab && tab.url === 'about:downloads' && !state.panel);
+    const splitVisible = !!(
+      state.split
+      && state.active != null
+      && (state.split[0] === state.active || state.split[1] === state.active)
+      && !state.panel
+      && !downloadsTabActive
+    );
+    const $splitBtn = $('split-btn');
+    $splitBtn.classList.toggle('on', splitVisible);
+    $splitBtn.title = splitVisible ? 'Close split view' : 'Split view';
+    $splitBtn.setAttribute('aria-label', $splitBtn.title);
+    $('split-swap').hidden = !splitVisible;
+    document.body.classList.toggle('full', !!state.panel || !!state.confirmClose || downloadsTabActive);
+
+    if (activeChanged || (!editing && document.activeElement !== $address)) {
+      if ($address.value !== nextUrl) $address.value = nextUrl;
+    }
+    updateAddressPlaceholder();
+    updateAddressClear();
+    renderSecurity(tab);
+
+    $('back').disabled = !(tab && tab.canGoBack);
+    $('forward').disabled = !(tab && tab.canGoForward);
+
+    const loading = !!(tab && tab.loading);
+    const $reload = $('reload');
+    $reload.querySelector('.icon-reload').hidden = loading;
+    $reload.querySelector('.icon-stop').hidden = !loading;
+    $reload.title = loading ? 'Stop loading' : 'Reload (F5)';
+    $reload.setAttribute('aria-label', loading ? 'Stop loading' : 'Reload');
+
+    const zoom = tab ? (tab.zoomPercent || 100) : 100;
+    const $zoomBtn = $('zoom-btn');
+    $zoomBtn.hidden = zoom === 100;
+    if (!($zoomBtn.hidden)) $zoomBtn.textContent = zoom + '%';
+
+    const $status = $('status-pill');
+    const showStatus = !editing && !!state.statusText && !state.panel && !downloadsTabActive;
+    $status.hidden = !showStatus;
+    if (showStatus) $status.textContent = state.statusText;
+
+    const $bmBtn = $('bookmark-btn');
+    $bmBtn.classList.toggle('saved', !!state.bookmarked);
+    $bmBtn.title = state.bookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)';
+
+    $('loadbar').classList.toggle('on', loading && !state.panel && !downloadsTabActive);
+    $('home').hidden = !(state.settings && state.settings.showHomeButton);
+
+    for (const name in PANELS) {
+      const open = state.panel === name;
+      PANELS[name].hidden = !open;
+      PANELS[name].classList.remove('leaving');
+    }
+    $downloadsPage.hidden = !downloadsTabActive;
+    $downloadsPage.classList.remove('leaving');
+
+    const dlActive = state.downloadsActive || 0;
+    const dlProgress = state.downloadsProgress;
+    $downloadsBtn.classList.toggle('on', downloadsTabActive);
+    $downloadsBtn.classList.toggle('busy', dlActive > 0);
+    $downloadsBtn.classList.toggle('indeterminate', dlActive > 0 && dlProgress == null);
+    $downloadsBtn.classList.toggle('unseen', !!state.downloadsUnseen);
+    const $ringFill = $downloadsBtn.querySelector('.dl-ring-fill');
+    if (dlActive > 0 && dlProgress != null) {
+      const circ = 75.4;
+      $ringFill.style.strokeDashoffset = (circ * (1 - dlProgress / 100)).toFixed(1);
+    } else {
+      $ringFill.style.strokeDashoffset = '';
+    }
+    const $dlBadge = $('dl-badge');
+    $dlBadge.hidden = dlActive === 0;
+    if (dlActive > 0) {
+      const badgeText = String(dlActive);
+      if ($dlBadge.textContent !== badgeText) $dlBadge.textContent = badgeText;
+    }
+
+    const addedSeq = state.downloadsAddedSeq || 0;
+    if (lastDownloadsAddedSeq === null) {
+      lastDownloadsAddedSeq = addedSeq;
+    } else if (addedSeq > lastDownloadsAddedSeq) {
+      lastDownloadsAddedSeq = addedSeq;
+      spawnFlyingDownload(state.downloadsLatest || '');
+    }
+
+    const $confirm = $('close-confirm');
+    $confirm.hidden = !state.confirmClose;
+    if (state.confirmClose) {
+      const n = state.downloadsActive;
+      $('close-confirm-text').textContent =
+        n === 1 ? '1 active download will be cancelled if you close now.'
+                : n + ' active downloads will be cancelled if you close now.';
+    }
+
+    if (state.panel === 'settings') renderSettings();
+    renderBookmarksBar();
+    if (downloadsTabActive) renderDownloads();
+    if (state.panel === 'bookmarks') renderBookmarks();
+    if (state.panel === 'history') renderHistory();
+    renderNotice();
+
+    // When a panel opens (or we switch to the Downloads tab), put keyboard focus
+    // inside it so keys like Ctrl+W, Ctrl+Tab, and Esc work right away.
+    if (state.panel && state.panel !== previousPanel) {
+      const target = state.panel === 'settings'
+        ? $('set-theme').querySelector('input:checked')
+        : state.panel === 'bookmarks'
+        ? $('bm-filter')
+        : $('hist-filter');
+      if (target) target.focus();
+    } else if (downloadsTabActive && (activeChanged || previousPanel) && !dragState) {
+      $downloadsPage.focus({ preventScroll: true });
+    }
+  }
+
+  function focusAddress() {
+    $address.focus();
+    $address.select();
+  }
+
+  function cycleTab(direction) {
+    const n = state.tabs.length;
+    if (n < 2) return;
+    const i = state.tabs.findIndex((t) => t.id === state.active);
+    send({ type: 'selectTab', id: state.tabs[(i + direction + n) % n].id });
+  }
+
+  // Plays the panel's closing animation, then asks Rust to close it.
+  function closePanel() {
+    const panel = PANELS[state.panel];
+    if (!panel || panel.classList.contains('leaving')) return;
+    if (document.activeElement === $('set-home-page')) $('set-home-page').blur();
+    panel.classList.add('leaving');
+    setTimeout(() => send({ type: 'closePanel' }), 110);
+  }
+  function focusFilter() {
+    const input = state.panel === 'bookmarks'
+      ? $('bm-filter')
+      : state.panel === 'history'
+      ? $('hist-filter')
+      : $('dl-filter');
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+  function togglePanel(name) {
+    if (state.panel === name) closePanel();
+    else send({ type: 'togglePanel', panel: name });
+  }
+
+  $('address-clear').addEventListener('mousedown', (e) => e.preventDefault());
+  $('address-clear').addEventListener('click', () => {
+    $address.value = '';
+    editing = true;
+    $address.focus();
+    updateAddressClear();
+    renderSecurity(activeTab());
+    send({ type: 'querySuggestions', query: '' });
+  });
+  $address.addEventListener('focus', () => {
+    $address.select();
+    updateAddressClear();
+    send({ type: 'querySuggestions', query: $address.value });
+  });
+  $address.addEventListener('blur', () => {
+    updateAddressClear();
+  });
+  $address.addEventListener('input', () => {
+    editing = true;
+    updateAddressClear();
+    renderSecurity(activeTab());
+    send({ type: 'querySuggestions', query: $address.value });
+  });
+  $address.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const input = $address.value.trim();
+      if (!input) return;
+      editing = false;
+      updateAddressClear();
+      send({ type: 'navigate', input });
+    } else if (e.key === 'Escape') {
+      editing = false;
+      const tab = activeTab();
+      $address.value = tab ? displayUrl(tab.url) : '';
+      updateAddressClear();
+      send({ type: 'focusContent' });
+    }
+  });
+
+  // ---- window: title-bar behaviour of the tab strip -------------------------
+
+  const windowAction = (action) => send({ type: 'window', action });
+  $('win-min').addEventListener('click', () => windowAction('minimize'));
+  $('win-max').addEventListener('click', () => windowAction('toggleMaximize'));
+  $('win-close').addEventListener('click', () => windowAction('close'));
+
+  // Pressing the mouse on empty tab-strip space moves the window;
+  // a double-click there maximizes or restores it.
+  $('tabstrip').addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || e.target.closest('.tab, button')) return;
+    e.preventDefault();
+    windowAction(e.detail === 2 ? 'toggleMaximize' : 'drag');
+  });
+  $('resize-top').addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const corner = { 'resize-nw': 'resizeTopLeft', 'resize-ne': 'resizeTopRight' }[e.target.id];
+    windowAction(corner || 'resizeTop');
+  });
+
+  // The ⋮ menu is an owned borderless popup web view (so it drops down cleanly
+  // over the active tab's web view). Rust positions it under the button.
+  function openMenu() {
+    const r = $('menu-btn').getBoundingClientRect();
+    send({ type: 'showMenu', x: r.right, y: r.bottom });
+  }
+  $('menu-btn').addEventListener('click', openMenu);
+  const command = (name) => send({ type: 'command', command: name });
+
+  $('newtab').addEventListener('click', () => send({ type: 'newTab' }));
+  $('back').addEventListener('click', () => send({ type: 'back' }));
+  $('forward').addEventListener('click', () => send({ type: 'forward' }));
+  $('reload').addEventListener('click', () => {
+    const tab = activeTab();
+    send({ type: tab && tab.loading ? 'stop' : 'reload' });
+  });
+  $('home').addEventListener('click', () => send({ type: 'goHome' }));
+  $('zoom-btn').addEventListener('click', () => send({ type: 'resetZoom' }));
+  $('bookmark-btn').addEventListener('click', () => send({ type: 'toggleBookmark' }));
+  $('split-btn').addEventListener('click', () => command('toggleSplitView'));
+  $('memory-btn').addEventListener('click', () => {
+    const r = $('memory-btn').getBoundingClientRect();
+    send({ type: 'showMemoryPanel', x: r.right, y: r.bottom });
+  });
+
+  // Rust sends the browser's total memory use every few seconds.
+  function setMemoryTotal(bytes) {
+    const mb = bytes / (1024 * 1024);
+    const text = mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : Math.round(mb) + ' MB';
+    if ($('memory-label').textContent !== text) $('memory-label').textContent = text;
+    $('memory-btn').setAttribute('aria-label', 'Memory: ' + text + ' used by the browser');
+  }
+  $('split-swap').addEventListener('click', () => command('swapSplitView'));
+  $downloadsBtn.addEventListener('click', () => command('downloads'));
+  $('bm-manage-btn').addEventListener('click', () => togglePanel('bookmarks'));
+  for (const done of document.querySelectorAll('.panel-done')) {
+    done.addEventListener('click', closePanel);
+  }
+  $('dl-folder').addEventListener('click', () => send({ type: 'openDownloadsFolder' }));
+  $('dl-clear').addEventListener('click', () => send({ type: 'clearDownloads' }));
+  $dlList.addEventListener('click', (e) => {
+    const button = e.target.closest('[data-act]');
+    const row = button && button.closest('.dl');
+    if (row) send({ type: 'downloadAction', id: Number(row.dataset.id), action: button.dataset.act });
+  });
+  $('close-cancel').addEventListener('click', () => send({ type: 'cancelClose' }));
+  $('close-proceed').addEventListener('click', () => send({ type: 'confirmClose' }));
+
+  // Shortcuts while the browser UI itself has focus. The same shortcuts pressed
+  // inside a page are caught natively in src/shortcut_hook.rs.
+  document.addEventListener('keydown', (e) => {
+    const k = (e.key || '').toLowerCase();
+    const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
+    const alt = e.altKey && !e.ctrlKey && !e.metaKey;
+
+    if (ctrl && e.shiftKey && k === 't') send({ type: 'reopenClosedTab' });
+    else if (ctrl && e.shiftKey && k === 'n') command('newPrivateTab');
+    else if (ctrl && e.shiftKey && k === 'o') togglePanel('bookmarks');
+    else if (ctrl && e.shiftKey && k === 'b') command('toggleBookmarksBar');
+    else if (e.key === 'F11' && !e.ctrlKey && !e.altKey) command('fullscreen');
+    else if (e.key === 'F12' && !e.ctrlKey && !e.altKey) command('devTools');
+    else if (ctrl && !e.shiftKey && k === 'f') command('find');
+    else if (ctrl && !e.shiftKey && k === 'p') command('print');
+    else if (ctrl && !e.shiftKey && k === 's') command('savePage');
+    else if (ctrl && (e.key === '=' || e.key === '+')) command('zoomIn');
+    else if (ctrl && !e.shiftKey && e.key === '-') command('zoomOut');
+    else if (alt && (k === 'f' || k === 'e')) openMenu();
+    else if (ctrl && !e.shiftKey && k === 't') send({ type: 'newTab' });
+    else if (ctrl && !e.shiftKey && k === 'w') {
+      if (state.active != null) send({ type: 'closeTab', id: state.active });
+    }
+    else if ((ctrl && !e.shiftKey && k === 'l') || (alt && k === 'd')) focusAddress();
+    else if (e.key === 'F5' || (ctrl && k === 'r')) send({ type: 'reload' });
+    else if (ctrl && e.key === 'Tab') cycleTab(e.shiftKey ? -1 : 1);
+    else if (ctrl && !e.shiftKey && k >= '1' && k <= '9') {
+      const idx = k === '9' ? state.tabs.length - 1 : Number(k) - 1;
+      if (state.tabs[idx]) send({ type: 'selectTab', id: state.tabs[idx].id });
+    }
+    else if (ctrl && !e.shiftKey && k === '0') send({ type: 'resetZoom' });
+    else if (ctrl && !e.shiftKey && k === 'd') send({ type: 'toggleBookmark' });
+    else if (ctrl && !e.shiftKey && k === 'h') togglePanel('history');
+    else if (alt && e.key === 'ArrowLeft') send({ type: 'back' });
+    else if (alt && e.key === 'ArrowRight') send({ type: 'forward' });
+    else if (alt && e.key === 'Home') send({ type: 'goHome' });
+    else if (ctrl && !e.shiftKey && e.key === ',') togglePanel('settings');
+    else if (ctrl && !e.shiftKey && k === 'j') command('downloads');
+    else if (e.key === 'Escape' && state.confirmClose) send({ type: 'cancelClose' });
+    else if (e.key === 'Escape' && state.panel && e.target !== $address) closePanel();
+    else return;
+
+    e.preventDefault();
+  });
+
+  // Keep the UI from behaving like a web page.
+  document.addEventListener('contextmenu', (e) => {
+    if (e.target !== $address && e.target !== $('set-home-page') && !e.target.classList.contains('panel-search')) {
+      e.preventDefault();
+    }
+  });
+  for (const type of ['dragover', 'drop']) {
+    document.addEventListener(type, (e) => e.preventDefault());
+  }
+
+  function setStatus(text) {
+    state.statusText = text || '';
+    const tab = activeTab();
+    const downloadsTabActive = !!(tab && tab.url === 'about:downloads' && !state.panel);
+    const $status = $('status-pill');
+    const showStatus = !editing && !!state.statusText && !state.panel && !downloadsTabActive;
+    $status.hidden = !showStatus;
+    if (showStatus) $status.textContent = state.statusText;
+  }
+
+  window.browser = { init, render, setStatus, setSuggestions, focusAddress, openMenu, focusFilter, setMemoryTotal };
+  send({ type: 'ready' });
+})();
+</script>
+</body>
+</html>

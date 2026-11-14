@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:,">
+<title>New Tab</title>
+<style>
+  :root {
+    --bg: #f3f5f8;
+    --glow-a: rgba(37, 99, 235, 0.09);
+    --glow-b: rgba(14, 165, 233, 0.07);
+    --surface: #ffffff;
+    --surface-subtle: #f8f9fc;
+    --surface-hover: #ffffff;
+    --text: #1b1f24;
+    --muted: #5b6570;
+    --border: #dde2ea;
+    --border-hover: #b8c2d1;
+    --accent: #2563eb;
+    --accent-soft: rgba(37, 99, 235, 0.10);
+    --accent-ring: rgba(37, 99, 235, 0.22);
+    --on-accent: #ffffff;
+    --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.04);
+    --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.07);
+    --shadow-lg: 0 14px 36px rgba(15, 23, 42, 0.11);
+    --ease: cubic-bezier(0.2, 0, 0, 1);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161b;
+      --glow-a: rgba(122, 167, 255, 0.11);
+      --glow-b: rgba(56, 189, 248, 0.07);
+      --surface: #1d2027;
+      --surface-subtle: #191c22;
+      --surface-hover: #242831;
+      --text: #e7e9ec;
+      --muted: #9aa3ae;
+      --border: #2e333d;
+      --border-hover: #464e5c;
+      --accent: #7aa7ff;
+      --accent-soft: rgba(122, 167, 255, 0.14);
+      --accent-ring: rgba(122, 167, 255, 0.24);
+      --on-accent: #0f141e;
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
+      --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.36);
+      --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.48);
+    }
+  }
+  body.private {
+    --glow-a: rgba(124, 58, 237, 0.13);
+    --glow-b: rgba(168, 85, 247, 0.08);
+    --accent: #7c3aed;
+    --accent-soft: rgba(124, 58, 237, 0.11);
+    --accent-ring: rgba(124, 58, 237, 0.24);
+  }
+  @media (prefers-color-scheme: dark) {
+    body.private {
+      --glow-a: rgba(167, 139, 250, 0.15);
+      --glow-b: rgba(139, 92, 246, 0.09);
+      --accent: #a78bfa;
+      --accent-soft: rgba(167, 139, 250, 0.16);
+      --accent-ring: rgba(167, 139, 250, 0.26);
+      --on-accent: #141022;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(62% 48% at 22% 0%, var(--glow-a), transparent 72%),
+      radial-gradient(56% 44% at 82% 4%, var(--glow-b), transparent 70%);
+    background-attachment: fixed;
+    color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: clamp(24px, 7vh, 72px) 24px 44px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  /* ---- Top status strip ------------------------------------------------ */
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    min-height: 28px;
+  }
+  .clock-group {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  #clock-time {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  #clock-meta {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .pill-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 11px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .pill-badge .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  body.private .pill-badge {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: transparent;
+  }
+
+  /* ---- Hero brand + search bar ----------------------------------------- */
+
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding-top: clamp(4px, 3vh, 22px);
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    user-select: none;
+  }
+  .brand-mark {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid var(--border);
+  }
+  .brand-title {
+    margin: 0;
+    font-size: clamp(22px, 3.1vw, 28px);
+    font-weight: 650;
+    letter-spacing: -0.025em;
+  }
+
+  .search-form {
+    width: 100%;
+    max-width: 620px;
+    position: relative;
+  }
+  .search-box {
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 8px 0 16px;
+    border-radius: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease), background-color 0.16s var(--ease);
+  }
+  .search-box:hover {
+    border-color: var(--border-hover);
+  }
+  .search-box:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-ring), var(--shadow-lg);
+  }
+  .search-icon {
+    flex: none;
+    color: var(--muted);
+    display: grid;
+    place-items: center;
+  }
+  #q {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    font: 15px/1.3 inherit;
+  }
+  #q::placeholder {
+    color: var(--muted);
+  }
+  .kbd-hint {
+    flex: none;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    user-select: none;
+  }
+  .search-clear {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+  }
+  .search-clear:hover {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
+  .search-go {
+    flex: none;
+    height: 36px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 11px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font: 500 13px/1 inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: transform 0.14s var(--ease), opacity 0.14s var(--ease);
+  }
+  .search-go:hover { opacity: 0.92; }
+  .search-go:active { transform: scale(0.97); }
+
+  /* ---- Private Info Card ----------------------------------------------- */
+
+  .private-card {
+    width: 100%;
+    max-width: 620px;
+    margin: 4px auto 0;
+    padding: 20px 22px;
+    border-radius: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .private-card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .private-traits {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .trait {
+    padding: 5px 10px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  /* ---- Quick Access Grid ----------------------------------------------- */
+
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 2px;
+  }
+  .section-title {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+  .section-note {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 600px) {
+    .tiles {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .shell {
+      padding: 20px 16px 32px;
+      gap: 22px;
+    }
+  }
+  .tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    color: inherit;
+    text-decoration: none;
+    overflow: hidden;
+    transition: transform 0.16s var(--ease), border-color 0.16s var(--ease),
+      box-shadow 0.16s var(--ease), background-color 0.16s var(--ease);
+  }
+  .tile:hover {
+    transform: translateY(-2px);
+    background: var(--surface-hover);
+    border-color: var(--border-hover);
+    box-shadow: var(--shadow-md);
+  }
+  .tile:active {
+    transform: translateY(0);
+  }
+  .tile:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .tile-top {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .monogram {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    font-size: 15px;
+    font-weight: 700;
+    color: #ffffff;
+    flex: none;
+    letter-spacing: -0.02em;
+  }
+  .bm-star {
+    color: var(--accent);
+    opacity: 0.9;
+    display: grid;
+    place-items: center;
+  }
+  .tile-title {
+    width: 100%;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tile-host {
+    width: 100%;
+    margin-top: -6px;
+    font-size: 11.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ---- Recent chips & Empty state -------------------------------------- */
+
+  .recent-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .recent-chip {
+    max-width: 100%;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px 7px 9px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    color: inherit;
+    text-decoration: none;
+    font-size: 12.5px;
+    transition: border-color 0.15s var(--ease), background-color 0.15s var(--ease);
+  }
+  .recent-chip:hover {
+    border-color: var(--border-hover);
+    background: var(--surface-hover);
+  }
+  .recent-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 700;
+    flex: none;
+  }
+  .recent-label {
+    max-width: 210px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .empty-card {
+    padding: 20px 22px;
+    border-radius: 16px;
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .empty-card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .shortcut-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
+  .shortcut-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  kbd {
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font: 600 11px/1.2 "Segoe UI Variable Text", "Segoe UI", monospace;
+  }
+</style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="clock-group">
+        <span id="clock-time">--:--</span>
+        <span id="clock-meta"></span>
+      </div>
+      <div id="mode-pill" class="pill-badge">
+        <span class="dot"></span>
+        <span id="mode-label">Search</span>
+      </div>
+    </header>
+
+    <section class="hero" aria-label="Search">
+      <div class="brand">
+        <div class="brand-mark" id="brand-mark" aria-hidden="true"></div>
+        <h1 class="brand-title" id="brand-title">Rust Browser</h1>
+      </div>
+
+      <form class="search-form" id="search-form" autocomplete="off">
+        <div class="search-box">
+          <span class="search-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="M20 20l-3.5-3.5"></path>
+            </svg>
+          </span>
+          <input id="q" type="text" autocomplete="off" spellcheck="false" aria-label="Search or enter web address">
+          <span class="kbd-hint" id="kbd-slash">/</span>
+          <button type="button" class="search-clear" id="q-clear" hidden aria-label="Clear search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+              <path d="M18 6L6 18M6 6l12 12"></path>
+            </svg>
+          </button>
+          <button type="submit" class="search-go" aria-label="Search">
+            <span>Go</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14M13 6l6 6-6 6"></path>
+            </svg>
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <section class="private-card" id="private-card" hidden>
+      <p>Pages opened in this Private Tab do not save to your browsing history, and site cookies and storage are discarded when the tab closes.</p>
+      <div class="private-traits">
+        <span class="trait">No history saved</span>
+        <span class="trait">Isolated session storage</span>
+        <span class="trait">Tracking prevention active</span>
+      </div>
+    </section>
+
+    <section class="section" id="quick-section" hidden>
+      <div class="section-head">
+        <h2 class="section-title">Quick access</h2>
+        <span class="section-note" id="quick-note"></span>
+      </div>
+      <div class="tiles" id="tiles"></div>
+    </section>
+
+    <section class="section" id="empty-section" hidden>
+      <div class="empty-card">
+        <p>Your bookmarks and most visited websites will appear here for quick access.</p>
+        <div class="shortcut-row">
+          <span class="shortcut-item"><kbd>Ctrl+L</kbd> Address bar</span>
+          <span class="shortcut-item"><kbd>Ctrl+D</kbd> Bookmark page</span>
+          <span class="shortcut-item"><kbd>Ctrl+T</kbd> New tab</span>
+          <span class="shortcut-item"><kbd>Ctrl+Shift+N</kbd> Private tab</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="recent-section" hidden>
+      <div class="section-head">
+        <h2 class="section-title">Jump back in</h2>
+      </div>
+      <div class="recent-list" id="recent-list"></div>
+    </section>
+  </main>
+
+  <script id="ntp-data" type="application/json">/* __NTP_DATA__ */</script>
+  <script>
+  (() => {
+    const LOGO_SVG = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><polygon points="15.5 8.5 13.8 13.8 8.5 15.5 10.2 10.2 15.5 8.5"></polygon></svg>`;
+    const SHIELD_SVG = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z"></path></svg>`;
+    const STAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.8l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 16.7l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 2.8z"></path></svg>`;
+    const PALETTE = ['#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#4f46e5'];
+
+    const $ = (id) => document.getElementById(id);
+    const $q = $('q');
+    const $clear = $('q-clear');
+    const $slash = $('kbd-slash');
+
+    let data = { private: false, engineName: 'Google', searchPrefix: 'https://www.google.com/search?q=', quick: [], recent: [] };
+    try {
+      const raw = $('ntp-data').textContent;
+      if (raw && raw[0] === '{') data = Object.assign(data, JSON.parse(raw));
+    } catch (_) {}
+
+    function isSafeUrl(url) {
+      if (typeof url !== 'string') return false;
+      const lower = url.toLowerCase();
+      return lower.startsWith('https://') || lower.startsWith('http://');
+    }
+
+    function hostOf(url) {
+      try {
+        return new URL(url).hostname.replace(/^www\./, '');
+      } catch (_) {
+        return url;
+      }
+    }
+
+    function pickColor(str) {
+      let h = 2166136261;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return PALETTE[(h >>> 0) % PALETTE.length];
+    }
+
+    function initialOf(title, host) {
+      const src = (host || title || '?').trim();
+      const ch = src.match(/[a-z0-9]/i);
+      return (ch ? ch[0] : src[0] || '?').toUpperCase();
+    }
+
+    function resolveInput(raw) {
+      const s = raw.trim();
+      if (!s) return null;
+      const lower = s.toLowerCase();
+      if (lower.startsWith('http://') || lower.startsWith('https://')) return s;
+      if (!/\s/.test(s)) {
+        const hostPart = s.split(/[/?#]/)[0];
+        if (/^\[.+\](:\d+)?$/.test(hostPart) || /^localhost(:\d+)?$/i.test(hostPart) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(hostPart)) {
+          return 'http://' + s;
+        }
+        const hostNoPort = hostPart.replace(/:\d+$/, '');
+        if (/^([a-z0-9-]+\.)+[a-z]{2,}$/i.test(hostNoPort)) {
+          return 'https://' + s;
+        }
+      }
+      return (data.searchPrefix || 'https://www.google.com/search?q=') + encodeURIComponent(s);
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      $('clock-time').textContent = hh + ':' + mm;
+      const hr = now.getHours();
+      const part = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+      const dateStr = now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      $('clock-meta').textContent = (data.private ? '' : part + ' · ') + dateStr;
+    }
+
+    function render(next) {
+      data = Object.assign({}, data, next);
+      const isPrivate = !!data.private;
+      document.body.classList.toggle('private', isPrivate);
+      document.title = isPrivate ? 'Private Tab' : 'New Tab';
+      $('brand-mark').innerHTML = isPrivate ? SHIELD_SVG : LOGO_SVG;
+      $('brand-title').textContent = isPrivate ? 'Private Tab' : 'Rust Browser';
+      const engine = data.engineName || 'Google';
+      $('mode-label').textContent = isPrivate ? 'Private · ' + engine : engine;
+      $q.placeholder = isPrivate ? 'Search privately with ' + engine : 'Search ' + engine + ' or enter address';
+
+      updateClock();
+
+      if (isPrivate) {
+        $('private-card').hidden = false;
+        $('quick-section').hidden = true;
+        $('empty-section').hidden = true;
+        $('recent-section').hidden = true;
+        return;
+      }
+
+      $('private-card').hidden = true;
+      const quick = Array.isArray(data.quick) ? data.quick.filter((item) => item && isSafeUrl(item.url)) : [];
+      const recent = Array.isArray(data.recent) ? data.recent.filter((item) => item && isSafeUrl(item.url)) : [];
+
+      const $tiles = $('tiles');
+      $tiles.textContent = '';
+      if (quick.length > 0) {
+        $('quick-section').hidden = false;
+        $('empty-section').hidden = true;
+        const bmCount = quick.filter((i) => i.bookmarked).length;
+        $('quick-note').textContent = bmCount > 0 ? 'Bookmarks & most visited' : 'Most visited';
+
+        for (const item of quick) {
+          const host = hostOf(item.url);
+          const a = document.createElement('a');
+          a.className = 'tile';
+          a.href = item.url;
+
+          const top = document.createElement('div');
+          top.className = 'tile-top';
+
+          const mono = document.createElement('span');
+          mono.className = 'monogram';
+          mono.style.background = pickColor(host);
+          mono.textContent = initialOf(item.title, host);
+          top.append(mono);
+
+          if (item.bookmarked) {
+            const star = document.createElement('span');
+            star.className = 'bm-star';
+            star.title = 'Bookmarked';
+            star.innerHTML = STAR_SVG;
+            top.append(star);
+          }
+
+          const title = document.createElement('div');
+          title.className = 'tile-title';
+          title.textContent = item.title || host;
+
+          const sub = document.createElement('div');
+          sub.className = 'tile-host';
+          sub.textContent = host;
+
+          a.append(top, title, sub);
+          $tiles.append(a);
+        }
+      } else {
+        $('quick-section').hidden = true;
+        $('empty-section').hidden = false;
+      }
+
+      const $recentList = $('recent-list');
+      $recentList.textContent = '';
+      if (recent.length > 0) {
+        $('recent-section').hidden = false;
+        for (const item of recent) {
+          const host = hostOf(item.url);
+          const a = document.createElement('a');
+          a.className = 'recent-chip';
+          a.href = item.url;
+
+          const dot = document.createElement('span');
+          dot.className = 'recent-dot';
+          dot.style.background = pickColor(host);
+          dot.textContent = initialOf(item.title, host);
+
+          const label = document.createElement('span');
+          label.className = 'recent-label';
+          label.textContent = item.title || host;
+
+          a.append(dot, label);
+          $recentList.append(a);
+        }
+      } else {
+        $('recent-section').hidden = true;
+      }
+    }
+
+    function syncSearchControls() {
+      const hasVal = $q.value.length > 0;
+      $clear.hidden = !hasVal;
+      $slash.hidden = hasVal || document.activeElement === $q;
+    }
+
+    $q.addEventListener('input', syncSearchControls);
+    $q.addEventListener('focus', syncSearchControls);
+    $q.addEventListener('blur', syncSearchControls);
+    $clear.addEventListener('click', () => {
+      $q.value = '';
+      syncSearchControls();
+      $q.focus();
+    });
+
+    $('search-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const target = resolveInput($q.value);
+      if (target && isSafeUrl(target)) {
+        window.location.assign(target);
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement !== $q && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        $q.focus();
+      }
+    });
+
+    window.__ntpApply = (next) => {
+      if (!data.private && next && typeof next === 'object') {
+        render(next);
+      }
+    };
+
+    render(data);
+    syncSearchControls();
+    setInterval(updateClock, 15000);
+  })();
+  </script>
+</body>
+</html>
+
