@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::settings::SettingsPatch;
+use crate::updater::Release;
 
 pub type TabId = u32;
 pub type DownloadId = u64;
@@ -227,6 +228,22 @@ pub enum UiMsg {
     NoticeAction {
         id: u32,
     },
+    /// "Check for updates" in Settings > About.
+    CheckForUpdates,
+    /// The Update button: download the new version and install it.
+    InstallUpdate,
+}
+
+/// Progress of an update, reported by the updater's background threads.
+#[derive(Debug)]
+pub enum UpdateEvent {
+    /// The answer to "is there a newer version?": `Some` only if there is.
+    /// `manual`: the user asked (rather than the daily check).
+    Checked { result: Result<Option<Release>, String>, manual: bool },
+    /// Percent of the installer downloaded.
+    Progress(u8),
+    /// The installer is downloaded and verified (its path), or why not.
+    Downloaded(Result<PathBuf, String>),
 }
 
 /// Browser shortcuts pressed while a page has focus (see `shortcut_hook.rs`).
@@ -353,6 +370,7 @@ pub enum UserEvent {
     RendererInfos(Vec<RendererInfo>),
     /// Another `rust-browser.exe` launch forwarded its optional target URL/search.
     ExternalOpen(Option<String>),
+    Update(UpdateEvent),
     DownloadStarted {
         id: DownloadId,
         tab: TabId,
@@ -504,6 +522,8 @@ mod tests {
         assert_eq!(m, UiMsg::ToggleMute { id: 3 });
         let m: UiMsg = serde_json::from_str(r#"{"type":"noticeAction","id":7}"#).unwrap();
         assert_eq!(m, UiMsg::NoticeAction { id: 7 });
+        assert_eq!(serde_json::from_str::<UiMsg>(r#"{"type":"checkForUpdates"}"#).unwrap(), UiMsg::CheckForUpdates);
+        assert_eq!(serde_json::from_str::<UiMsg>(r#"{"type":"installUpdate"}"#).unwrap(), UiMsg::InstallUpdate);
         assert!(serde_json::from_str::<UiMsg>(r#"{"type":"command","command":"formatDisk"}"#).is_err());
     }
 

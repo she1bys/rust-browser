@@ -20,6 +20,10 @@ The app isn't code-signed yet, so Windows SmartScreen may warn about it: choose 
 Prefer not to install? Download `rust-browser-<version>-portable.exe` and run it directly.
 Uninstall from Settings > Apps; it asks whether to keep your bookmarks, history and settings.
 
+### Updates
+
+Rust Browser checks for a new version once a day (you can turn this off, or check now, in Settings > About). When one is out, an **Update** button appears in the toolbar. Click it and the browser downloads the new installer, checks it against the release's SHA-256 checksums, updates itself in a few seconds and reopens with your tabs. Nothing is downloaded or installed until you click. The portable .exe can't update itself; its Update button opens the download page instead.
+
 ## Features
 
 - Chrome-style window: no separate title bar; the tab strip is the title bar, with minimize, maximize and close at its right end. Drag empty tab-strip space to move the window, double-click it to maximize
@@ -51,6 +55,7 @@ Uninstall from Settings > Apps; it asks whether to keep your bookmarks, history 
   - Where downloads are saved
   - Privacy: block pop-ups, tracking prevention (off / basic / balanced / strict), offer to save passwords, autofill forms, and protection from dangerous sites (Microsoft Defender SmartScreen, on by default)
   - Clear browsing data (cookies, cache, site data, saved passwords), clear history, and reset all settings
+- Updates: a daily check for new versions (Settings > About: on/off and "Check for updates"), and a one-click Update button that downloads, verifies and installs the new version, then reopens your tabs
 - Closing the last tab closes the browser, like Chrome (with a confirmation prompt if downloads are active)
 - Smooth animations throughout (tabs opening and closing, panels, buttons, progress); turned off automatically if Windows is set to reduce motion
 - Downloads tab (`Ctrl+J` or toolbar button): opens in its own tab (`about:downloads`) with live progress, cancel, open file, show in folder, open download folder, remove entries, and clear list; toolbar button animates with a progress ring and count badge when downloads are added or running. A download keeps running if you close its source tab
@@ -181,6 +186,7 @@ src/webview_hooks.rs   WebView2 hooks (history, favicon, status text, fullscreen
 src/menu.rs            borderless floating popup menus: the main menu and tab right-click menu
 src/single_instance.rs named-pipe forwarding to an already-running instance
 src/url_input.rs       address bar text -> URL or search
+src/updater.rs         update check (GitHub releases), installer download + SHA-256 check, silent install
 ui/index.html          the browser UI: tab strip, toolbar, and panels
 ui/menu.html           popup menu UI (icons, zoom bar, keyboard navigation)
 ```

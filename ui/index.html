@@ -400,6 +400,27 @@
     white-space: nowrap;
   }
   #memory-label:empty { display: none; }
+  /* Update button: shown only when a newer version is out. */
+  #toolbar #update-btn {
+    width: auto;
+    padding: 0 11px 0 9px;
+    margin: 0 3px;
+    display: flex;
+    gap: 6px;
+    border-radius: 15px;
+    font-size: 12px;
+    font-weight: 650;
+    white-space: nowrap;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    animation: update-in 0.35s var(--ease);
+  }
+  #toolbar #update-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  #toolbar #update-btn:disabled { opacity: 1; cursor: default; }
+  #toolbar #update-btn svg { width: 15px; height: 15px; }
+  #update-btn.working svg { animation: spin 1.1s linear infinite; }
+  #update-label { font-variant-numeric: tabular-nums; }
+  @keyframes update-in { from { opacity: 0; transform: scale(0.85); } }
   #address-wrap {
     position: relative;
     flex: 1 1 auto;
@@ -993,6 +1014,7 @@
   .dl-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
   .dl-status { margin-top: 3px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dl.failed .dl-status, .dl.missing .dl-status { color: var(--danger); }
+  #update-status.error { color: var(--danger); }
   .dl.missing .dl-name, .dl.failed .dl-name, .dl.cancelled .dl-name { text-decoration: line-through; color: var(--muted); }
   .dl-bar { height: 4px; margin-top: 8px; border-radius: 2px; background: var(--border); overflow: hidden; }
   .dl-fill { height: 100%; width: 0; border-radius: 2px; background: var(--accent); transition: width 0.2s linear; }
@@ -1156,6 +1178,10 @@
         <path d="M5 21h14"/>
       </svg>
       <span id="dl-badge" hidden></span>
+    </button>
+    <button id="update-btn" class="icon-btn" title="Update Rust Browser" aria-label="Update Rust Browser" hidden>
+      <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
+      <span id="update-label">Update</span>
     </button>
     <button id="menu-btn" class="icon-btn" title="Menu (Alt+F)" aria-label="Menu" aria-haspopup="menu">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="18.5" r="1.3"/></svg>
@@ -1331,6 +1357,20 @@
               <div id="about-engine" class="row-hint"></div>
             </div>
             <button id="reset-settings" class="btn">Reset settings…</button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Updates</div>
+              <div id="update-status" class="row-hint" aria-live="polite"></div>
+            </div>
+            <button id="update-action" class="btn">Check for updates</button>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Check for updates automatically</div>
+              <div class="row-hint">Once a day, asks GitHub whether a newer version is out. Nothing is installed until you click Update.</div>
+            </div>
+            <button class="switch" role="switch" data-setting="checkForUpdates" aria-checked="true" aria-label="Check for updates automatically"></button>
           </div>
         </div>
       </section>
@@ -1923,6 +1963,50 @@
     $('about-engine').textContent = parts.join(' · ');
   }
 
+  // ---- updates -----------------------------------------------------------
+
+  // The toolbar's Update button (only while a newer version is out) and the
+  // Updates row in Settings > About.
+  function renderUpdate() {
+    const u = state.update || { state: 'idle' };
+    const version = u.version ? 'Rust Browser ' + u.version : 'the new version';
+    const working = u.state === 'downloading' || u.state === 'installing';
+
+    const $btn = $('update-btn');
+    $btn.hidden = !(u.version && (u.state === 'available' || working || u.state === 'failed'));
+    $btn.disabled = working;
+    $btn.classList.toggle('working', working);
+    const label = u.state === 'downloading'
+      ? 'Updating' + (u.percent != null ? ' ' + u.percent + '%' : '…')
+      : u.state === 'installing' ? 'Restarting…' : 'Update';
+    if ($('update-label').textContent !== label) $('update-label').textContent = label;
+    const tip = u.canInstall ? 'Update to ' + version : 'Download ' + version;
+    $btn.title = tip;
+    $btn.setAttribute('aria-label', tip);
+
+    const status = {
+      idle: 'Checks GitHub for a newer version.',
+      checking: 'Checking for updates…',
+      upToDate: 'You have the latest version.',
+      available: version + ' is available.',
+      downloading: 'Downloading ' + version + (u.percent != null ? ' · ' + u.percent + '%' : '…'),
+      installing: 'Installing ' + version + '. The browser will restart with your tabs.',
+      failed: u.error || 'Something went wrong.',
+    }[u.state] || '';
+    if ($('update-status').textContent !== status) $('update-status').textContent = status;
+    $('update-status').classList.toggle('error', u.state === 'failed');
+
+    const $action = $('update-action');
+    const offerUpdate = u.version && (u.state === 'available' || u.state === 'failed' || working);
+    $action.textContent = offerUpdate ? (u.canInstall ? 'Update now' : 'Download') : 'Check for updates';
+    $action.dataset.act = offerUpdate ? 'install' : 'check';
+    $action.disabled = working || u.state === 'checking';
+  }
+  $('update-btn').addEventListener('click', () => send({ type: 'installUpdate' }));
+  $('update-action').addEventListener('click', (e) => {
+    send({ type: e.currentTarget.dataset.act === 'install' ? 'installUpdate' : 'checkForUpdates' });
+  });
+
   // ---- downloads ---------------------------------------------------------
 
   function formatBytes(bytes) {
@@ -2434,6 +2518,7 @@
     }
 
     if (state.panel === 'settings') renderSettings();
+    renderUpdate();
     renderBookmarksBar();
     if (downloadsTabActive) renderDownloads();
     if (state.panel === 'bookmarks') renderBookmarks();

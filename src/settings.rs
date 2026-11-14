@@ -171,6 +171,9 @@ pub struct Settings {
     /// Microsoft Defender SmartScreen: warns before phishing and malware
     /// sites and dangerous downloads.
     pub safe_browsing: bool,
+    /// Once a day, ask GitHub whether a newer version is out (and show an
+    /// Update button if so). Nothing is installed without a click.
+    pub check_for_updates: bool,
 }
 
 impl Default for Settings {
@@ -191,6 +194,7 @@ impl Default for Settings {
             save_passwords: true,
             autofill: true,
             safe_browsing: true,
+            check_for_updates: true,
         }
     }
 }
@@ -215,6 +219,7 @@ pub struct SettingsPatch {
     pub save_passwords: Option<bool>,
     pub autofill: Option<bool>,
     pub safe_browsing: Option<bool>,
+    pub check_for_updates: Option<bool>,
 }
 
 impl Settings {
@@ -296,6 +301,9 @@ impl Settings {
         if let Some(safe) = patch.safe_browsing {
             self.safe_browsing = safe;
         }
+        if let Some(check) = patch.check_for_updates {
+            self.check_for_updates = check;
+        }
         *self != before
     }
 }
@@ -354,8 +362,13 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"searchEngine":"google","theme":"dark"}"#).unwrap();
         assert!(s.block_popups && s.save_passwords && s.autofill);
         assert_eq!(s.tracking_prevention, TrackingPrevention::Balanced);
-        // SmartScreen protection is on unless the user turns it off.
+        // SmartScreen protection and update checks are on unless the user turns them off.
         assert!(s.safe_browsing);
+        assert!(s.check_for_updates);
+        let mut off = s.clone();
+        let patch: SettingsPatch = serde_json::from_str(r#"{"checkForUpdates":false}"#).unwrap();
+        assert!(off.apply(patch));
+        assert!(!off.check_for_updates);
         let mut s = s;
         assert!(s.apply(SettingsPatch { safe_browsing: Some(false), ..Default::default() }));
         assert!(!s.safe_browsing);
@@ -446,6 +459,7 @@ mod tests {
             save_passwords: false,
             autofill: false,
             safe_browsing: false,
+            check_for_updates: false,
         };
         saved.save(&path).unwrap();
         assert_eq!(Settings::load(&path), saved);

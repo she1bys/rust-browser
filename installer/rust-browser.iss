@@ -104,6 +104,9 @@ Root: HKA; Subkey: "Software\Classes\.htm\OpenWithProgids"; ValueType: string; V
 Root: HKA; Subkey: "Software\Classes\.html\OpenWithProgids"; ValueType: string; ValueName: "{#HtmlProgId}"; ValueData: ""; Flags: uninsdeletevalue
 
 [Run]
+; After an update from inside the browser (`/RELAUNCH`, see src/updater.rs):
+; start it again with the tabs it had open, as the signed-in user (not as admin).
+Filename: "{app}\{#AppExeName}"; Parameters: "--restore-session"; Flags: nowait runasoriginaluser; Check: RelaunchRequested
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 ; Windows only lets you, not an app, change the default browser: this opens
 ; the right page of Settings.
@@ -116,6 +119,17 @@ const
 
 var
   DownloadPage: TDownloadWizardPage;
+
+{ True when the browser itself started this update and wants to be reopened. }
+function RelaunchRequested: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/RELAUNCH') = 0 then
+      Result := True;
+end;
 
 { True if the WebView2 Runtime is installed, for this user or for all users. }
 function WebView2Installed: Boolean;

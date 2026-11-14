@@ -30,13 +30,14 @@ use crate::downloads::{Download, DownloadState, Downloads};
 use crate::history::{History, HistoryEntry};
 use crate::ipc::{
     Command as BrowserCommand, DownloadAction, DownloadId, Panel, ProcessFailure, RendererInfo, Shortcut, TabCommand,
-    TabId, UiMsg, UserEvent, WindowAction,
+    TabId, UiMsg, UpdateEvent, UserEvent, WindowAction,
 };
 use crate::memory;
 use crate::menu::{MenuEntry, MenuKind, PopupMenu};
 use crate::newtab::{self, NewTabState, NEW_TAB_URL};
 use crate::session::Session;
 use crate::settings::{self, NewTabPage, SearchEngine, Settings, SettingsPatch, Startup, Theme, ZOOM_LEVELS};
+use crate::updater::{self, Release};
 use crate::webview_hooks::PopupGestures;
 use crate::{shortcut_hook, url_input, webview_hooks};
 use std::sync::{Arc, RwLock};
@@ -49,6 +50,13 @@ const APP_NAME: &str = "Rust Browser";
 const MAX_CLOSED_TABS: usize = 25;
 /// How often download progress is pushed to the UI while the panel is open.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(150);
+/// The first automatic update check waits this long after start-up, so it
+/// never competes with opening the first pages.
+const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(30);
+/// Then the browser checks again this often while it stays open...
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// ...or this soon after a check that failed (offline, GitHub busy).
+const UPDATE_RETRY_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 const UI_HTML: &str = include_str!("../ui/index.html");
 
@@ -147,6 +155,38 @@ struct TabView<'a> {
 enum NoticeAction {
     OpenUrl { url: String, private: bool },
     Reload(TabId),
+    InstallUpdate,
+}
+
+/// Where the browser is with updating itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UpdateStatus {
+    /// Not checked yet since start-up.
+    Idle,
+    Checking,
+    UpToDate,
+    /// `Browser::update_release` is newer than this copy.
+    Available,
+    /// Downloading the installer: percent done, if known.
+    Downloading(Option<u8>),
+    /// The installer is starting; the browser is about to close.
+    Installing,
+    Failed(String),
+}
+
+/// The update status as the UI sees it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateView<'a> {
+    /// idle, checking, upToDate, available, downloading, installing or failed.
+    state: &'static str,
+    /// The newer version, once one was found.
+    version: Option<String>,
+    percent: Option<u8>,
+    error: Option<&'a str>,
+    /// This copy was installed with the installer and can update itself;
+    /// otherwise (portable) "Update" opens the download page.
+    can_install: bool,
 }
 
 #[derive(Serialize)]
@@ -235,6 +275,7 @@ struct StateView<'a> {
     bookmarks: Option<&'a [Bookmark]>,
     /// Only filled while the History panel is open.
     history: &'a [HistoryEntry],
+    update: UpdateView<'a>,
 }
 
 /// Where a newly opened tab goes in the tab strip.
@@ -323,6 +364,14 @@ pub struct Browser {
     minimized: bool,
     /// Last total memory figure shown on the toolbar's memory button.
     shown_total: Cell<u64>,
+
+    update: UpdateStatus,
+    /// The newer release found by the last check.
+    update_release: Option<Release>,
+    /// When the next automatic update check is due.
+    next_update_check: Instant,
+    /// Installed with the installer, so it can update itself.
+    can_update_itself: bool,
 }
 
 impl Browser {
@@ -442,6 +491,10 @@ impl Browser {
             hover: None,
             minimized: false,
             shown_total: Cell::new(0),
+            update: UpdateStatus::Idle,
+            update_release: None,
+            next_update_check: Instant::now() + FIRST_UPDATE_CHECK,
+            can_update_itself: updater::can_update_itself(),
         })
     }
 
@@ -779,6 +832,7 @@ impl Browser {
             UserEvent::Tick => {
                 self.manage_memory();
                 self.update_memory_button(false);
+                self.check_for_updates_if_due();
                 #[cfg(debug_assertions)]
                 self.debug_memory_probe();
             }
@@ -799,6 +853,7 @@ impl Browser {
                     }
                 }
             }
+            UserEvent::Update(event) => self.on_update_event(event),
             UserEvent::ExternalOpen(arg) => {
                 self.window.set_minimized(false);
                 self.window.set_focus();
@@ -919,6 +974,8 @@ impl Browser {
                     }
                 }
             }
+            UiMsg::CheckForUpdates => self.check_for_updates(true),
+            UiMsg::InstallUpdate => self.install_update(),
             UiMsg::CloseTab { id } => self.close_tab(id),
             UiMsg::SelectTab { id, focus } => self.select_tab_with_focus(id, focus),
             UiMsg::ReorderTab { id, to_index } => self.reorder_tab(id, to_index),
@@ -1746,6 +1803,149 @@ impl Browser {
                     log_err(wv.reload(), "reload crashed tab");
                 }
             }
+            NoticeAction::InstallUpdate => self.install_update(),
+        }
+    }
+
+    // ---- updates --------------------------------------------------------
+
+    /// The daily automatic check (if it's switched on and due).
+    fn check_for_updates_if_due(&mut self) {
+        let busy = matches!(
+            self.update,
+            UpdateStatus::Checking | UpdateStatus::Available | UpdateStatus::Downloading(_) | UpdateStatus::Installing
+        );
+        if self.settings.check_for_updates && !busy && Instant::now() >= self.next_update_check {
+            self.check_for_updates(false);
+        }
+    }
+
+    /// Asks GitHub for the newest release in the background; the answer comes
+    /// back as [`UpdateEvent::Checked`].
+    fn check_for_updates(&mut self, manual: bool) {
+        if matches!(self.update, UpdateStatus::Checking | UpdateStatus::Downloading(_) | UpdateStatus::Installing) {
+            return;
+        }
+        self.update = UpdateStatus::Checking;
+        // Pushed back now, so a slow answer doesn't start a second check.
+        self.next_update_check = Instant::now() + UPDATE_CHECK_INTERVAL;
+        updater::check(self.proxy.clone(), manual);
+        self.sync();
+    }
+
+    fn on_update_event(&mut self, event: UpdateEvent) {
+        match event {
+            UpdateEvent::Checked { result, manual } => {
+                // An Update click may have started a download meanwhile.
+                if self.update != UpdateStatus::Checking {
+                    return;
+                }
+                match result {
+                    Ok(Some(release)) => {
+                        let version = release.version;
+                        self.update_release = Some(release);
+                        self.update = UpdateStatus::Available;
+                        if !manual {
+                            self.show_notice_with_action(
+                                &format!("Rust Browser {version} is available"),
+                                "Update",
+                                NoticeAction::InstallUpdate,
+                            );
+                        }
+                    }
+                    Ok(None) => {
+                        self.update_release = None;
+                        self.update = UpdateStatus::UpToDate;
+                    }
+                    Err(e) => {
+                        self.next_update_check = Instant::now() + UPDATE_RETRY_INTERVAL;
+                        // The daily check fails quietly (e.g. offline); Settings shows why.
+                        self.update = UpdateStatus::Failed(format!("Couldn't check for updates: {e}"));
+                    }
+                }
+                self.sync();
+            }
+            UpdateEvent::Progress(percent) => {
+                if matches!(self.update, UpdateStatus::Downloading(_)) {
+                    self.update = UpdateStatus::Downloading(Some(percent));
+                    self.sync();
+                }
+            }
+            UpdateEvent::Downloaded(Ok(installer)) => {
+                if !matches!(self.update, UpdateStatus::Downloading(_)) {
+                    return;
+                }
+                if self.downloads.active_count() > 0 {
+                    // Closing now would cancel the user's downloads.
+                    self.update = UpdateStatus::Available;
+                    self.show_notice("Wait for your downloads to finish, then click Update again", true);
+                    return;
+                }
+                self.update = UpdateStatus::Installing;
+                self.flush_sync();
+                self.save_session();
+                match updater::run_installer(&installer) {
+                    // The installer updates the files once this window is gone,
+                    // then starts the browser again with the same tabs.
+                    Ok(()) => self.exit_requested = true,
+                    Err(e) => {
+                        let message = format!("Couldn't start the installer: {e}");
+                        self.update = UpdateStatus::Failed(message.clone());
+                        self.show_notice(&message, true);
+                    }
+                }
+            }
+            UpdateEvent::Downloaded(Err(e)) => {
+                let message = format!("Update failed: {e}");
+                self.update = UpdateStatus::Failed(message.clone());
+                self.show_notice(&message, true);
+            }
+        }
+    }
+
+    /// The Update button: download, verify and install the newer version.
+    fn install_update(&mut self) {
+        if matches!(self.update, UpdateStatus::Checking | UpdateStatus::Downloading(_) | UpdateStatus::Installing) {
+            return;
+        }
+        let Some(release) = self.update_release.clone() else {
+            self.check_for_updates(true);
+            return;
+        };
+        if !self.can_update_itself {
+            // A portable copy or a build folder: the installer would install a
+            // second copy elsewhere, so show the download page instead.
+            self.open_tab_logged(&release.page_url, Placement::AfterActive, false);
+            return;
+        }
+        if self.downloads.active_count() > 0 {
+            self.show_notice("Wait for your downloads to finish, then click Update again", true);
+            return;
+        }
+        self.update = UpdateStatus::Downloading(None);
+        updater::download(release, self.proxy.clone());
+        self.sync();
+    }
+
+    fn update_view(&self) -> UpdateView<'_> {
+        let (state, error) = match &self.update {
+            UpdateStatus::Idle => ("idle", None),
+            UpdateStatus::Checking => ("checking", None),
+            UpdateStatus::UpToDate => ("upToDate", None),
+            UpdateStatus::Available => ("available", None),
+            UpdateStatus::Downloading(_) => ("downloading", None),
+            UpdateStatus::Installing => ("installing", None),
+            UpdateStatus::Failed(e) => ("failed", Some(e.as_str())),
+        };
+        UpdateView {
+            state,
+            version: self.update_release.as_ref().map(|r| r.version.to_string()),
+            percent: match self.update {
+                UpdateStatus::Downloading(p) => p,
+                _ => None,
+            },
+            error,
+            can_install: self.can_update_itself,
         }
     }
 
@@ -2887,6 +3087,7 @@ impl Browser {
             refresh_hz: self.refresh_hz,
             bookmarks,
             history: if history_open { self.history.items() } else { &[] },
+            update: self.update_view(),
         };
         match serde_json::to_string(&state) {
             Ok(json) => log_err(

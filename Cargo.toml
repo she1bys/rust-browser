@@ -1,6 +1,6 @@
 [package]
 name = "rust-browser"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "A fast, lightweight Windows web browser built in Rust on top of WebView2."
 license = "MIT"
@@ -29,7 +29,9 @@ windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Media",
+    "Win32_Networking_WinHttp",
     "Win32_Security",
+    "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
     "Win32_System_LibraryLoader",

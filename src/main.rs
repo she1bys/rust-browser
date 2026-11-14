@@ -15,6 +15,7 @@ mod session;
 mod settings;
 mod shortcut_hook;
 mod single_instance;
+mod updater;
 mod url_input;
 mod webview_hooks;
 
@@ -76,6 +77,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // `rust-browser.exe <url or search>` opens that instead of the home page.
     browser.open_initial_tabs(cli_arg.as_deref())?;
     browser.start_memory_saver();
+    updater::clean_up_old_download();
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
