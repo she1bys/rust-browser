@@ -80,17 +80,40 @@ Uninstall from Settings > Apps; it asks whether to keep your bookmarks, history 
 | Ctrl+F, Ctrl+P, Ctrl+Plus/Minus | Find, print, zoom (built into WebView2) |
 | F12 | Developer tools |
 
-## Requirements
+## Change it yourself
+
+Rust Browser is open source under the [MIT license](LICENSE): you're free to download the code, change it, and share or publish your own version. Keep the license notice when you do.
+
+### 1. Install the tools (once)
 
 - Windows 10 or 11 with the [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (preinstalled on Windows 11)
-- [Rust](https://rustup.rs) (stable, MSVC toolchain)
-- Visual Studio 2022 Build Tools with the "Desktop development with C++" workload
+- [Git](https://git-scm.com), [Rust](https://rustup.rs) (stable, MSVC toolchain) and Visual Studio 2022 Build Tools with the "Desktop development with C++" workload. From a terminal:
 
-## Build and run
+```bash
+winget install Git.Git Rustlang.Rustup
+```
+
+```bash
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+### 2. Get the code and run it
+
+```bash
+git clone https://github.com/she1bys/rust-browser.git
+```
+
+```bash
+cd rust-browser
+```
 
 ```bash
 cargo run
 ```
+
+The first build downloads and compiles the dependencies and takes a few minutes; later builds take seconds. Edit the files (see [How it is put together](#how-it-is-put-together)) and run `cargo run` again to see your change. The browser UI is plain HTML, CSS and JavaScript in `ui/`; the browser itself is Rust in `src/`.
+
+### Build commands
 
 Optimized build (output: `target\release\rust-browser.exe`):
 
@@ -128,9 +151,9 @@ git push origin v0.1.0
 
 Every push and pull request is checked by [ci.yml](.github/workflows/ci.yml) (formatting, Clippy, tests, release build).
 
-## License
+## Contributing
 
-[MIT](LICENSE)
+Bug reports, ideas and improvements are welcome: open an [issue](https://github.com/she1bys/rust-browser/issues) or a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it is put together
 
@@ -163,3 +186,7 @@ is stretched over the whole window.
 The UI and Rust talk over a JSON message channel. Web pages are untrusted and have no
 channel to the browser at all: page titles, loads, downloads, favicons, history state and
 shortcut key presses all come from WebView2 itself.
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 Rust Browser contributors.
