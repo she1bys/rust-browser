@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" width="128" height="128" alt="Rust Browser logo"></p>
+
 # Rust Browser
 
 A fast, lightweight web browser for Windows. The core is Rust; pages are rendered by
