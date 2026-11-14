@@ -58,6 +58,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "target\installer\RustBrowser-Setup-$env:VERSION.exe" dist\
+          # Same installer under a fixed name, so this link always gets the newest one:
+          # https://github.com/<owner>/rust-browser/releases/latest/download/RustBrowser-Setup.exe
+          Copy-Item "target\installer\RustBrowser-Setup-$env:VERSION.exe" dist\RustBrowser-Setup.exe
           Copy-Item target\release\rust-browser.exe "dist\rust-browser-$env:VERSION-portable.exe"
           # Hash first, then write: writing while listing would hash the sums file itself.
           $sums = Get-ChildItem dist -File | ForEach-Object {

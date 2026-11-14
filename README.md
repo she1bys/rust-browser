@@ -6,7 +6,11 @@ sites work the way they do in Edge or Chrome.
 
 ## Download and install
 
-1. Open the [latest release](https://github.com/she1bys/rust-browser/releases/latest) and download `RustBrowser-Setup-<version>.exe`.
+### [⬇ Download Rust Browser for Windows](https://github.com/she1bys/rust-browser/releases/latest/download/RustBrowser-Setup.exe)
+
+Windows 10 and 11, 64-bit · about 2.5 MB · [all versions and the portable .exe](https://github.com/she1bys/rust-browser/releases)
+
+1. Click the link above to download the installer (always the newest version).
 2. Run it. No administrator rights are needed: it installs for your Windows account, adds a Start menu shortcut, and installs the Microsoft Edge WebView2 Runtime if your PC doesn't have it yet (Windows 10 and 11 usually do).
 3. To make it your default browser, tick "Make Rust Browser my default browser" at the end of setup, or choose it later in Windows Settings > Apps > Default apps.
 
