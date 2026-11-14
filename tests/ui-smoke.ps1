@@ -109,7 +109,12 @@ function Count-Elements([string]$name) {
 
 function Click([string]$pattern, [string]$type = 'Button') { Press (Find-Element $pattern $type) }
 
-function Get-Settings { Get-Content (Join-Path $profileDir 'settings.json') -Raw | ConvertFrom-Json }
+# The saved settings, or nothing while the browser hasn't written them yet.
+function Get-Settings {
+  $file = Join-Path $profileDir 'settings.json'
+  if (-not (Test-Path $file)) { return $null }
+  try { Get-Content $file -Raw | ConvertFrom-Json } catch { $null }
+}
 
 # Engine processes started for this browser (WebView2 runs each page group,
 # the GPU and so on in separate msedgewebview2.exe processes).
@@ -175,9 +180,9 @@ try {
   Check 'Ad blocker switch saves the setting' {
     # The switch (a button with a toggle), not the row's text label of the same name.
     Click 'Block ads and trackers' 'Button'
-    Wait-Until -what 'blockAds = false' { (Get-Settings).blockAds -eq $false } | Out-Null
+    Wait-Until -what 'blockAds = false' { $s = Get-Settings; $s -and $s.blockAds -eq $false } | Out-Null
     Click 'Block ads and trackers' 'Button'
-    Wait-Until -what 'blockAds = true' { (Get-Settings).blockAds -eq $true } | Out-Null
+    Wait-Until -what 'blockAds = true' { $s = Get-Settings; $s -and $s.blockAds -eq $true } | Out-Null
     'off, then on again'
   }
 
