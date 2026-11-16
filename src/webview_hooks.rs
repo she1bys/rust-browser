@@ -8,9 +8,10 @@ use std::{
 
 use tao::event_loop::EventLoopProxy;
 use webview2_com::{
-    take_pwstr, ContainsFullScreenElementChangedEventHandler, FaviconChangedEventHandler, FindStartCompletedHandler,
-    FocusChangedEventHandler, GetProcessExtendedInfosCompletedHandler, HistoryChangedEventHandler,
-    IsDocumentPlayingAudioChangedEventHandler, IsMutedChangedEventHandler,
+    take_pwstr, CallDevToolsProtocolMethodCompletedHandler, ContainsFullScreenElementChangedEventHandler,
+    FaviconChangedEventHandler, FindStartCompletedHandler, FocusChangedEventHandler,
+    GetProcessExtendedInfosCompletedHandler, HistoryChangedEventHandler, IsDocumentPlayingAudioChangedEventHandler,
+    IsMutedChangedEventHandler,
     Microsoft::Web::WebView2::Win32::{
         ICoreWebView2, ICoreWebView2Environment13, ICoreWebView2Environment15, ICoreWebView2Environment8,
         ICoreWebView2FrameInfo, ICoreWebView2FrameInfo2, ICoreWebView2ProcessExtendedInfoCollection,
@@ -66,7 +67,11 @@ pub fn attach_ad_blocker(
     // outlives its call and every out-pointer is a valid local.
     unsafe {
         let core22 = core.cast::<ICoreWebView2_22>().ok();
-        for filter in adblock::request_filters() {
+        // Diagnostics (RUST_BROWSER_TRACE only): see every request, so the
+        // trace lists which third-party hosts pages contact.
+        let trace_requests = std::env::var_os("RUST_BROWSER_TRACE").is_some();
+        let filters = adblock::request_filters().chain(trace_requests.then(|| "*".to_string()));
+        for filter in filters {
             let filter = HSTRING::from(filter);
             match &core22 {
                 // Includes requests made by iframes and workers, where most ads load.
@@ -103,7 +108,16 @@ pub fn attach_ad_blocker(
                 let mut page = PWSTR::null();
                 sender.Source(&mut page)?;
                 let page = take_pwstr(page);
-                if adblock::should_block(&uri, &page) {
+                let block = adblock::should_block(&uri, &page);
+                if trace_requests {
+                    if let (Some(host), Some(page_host)) = (adblock::host_of(&uri), adblock::host_of(&page)) {
+                        crate::trace(&format!(
+                            "request {} {host} (page {page_host})",
+                            if block { "BLOCKED" } else { "allowed" }
+                        ));
+                    }
+                }
+                if block {
                     let response = environment.CreateWebResourceResponse(
                         None::<&IStream>,
                         403,
@@ -325,6 +339,99 @@ pub fn main_frame_id(webview: &WebView) -> Option<u32> {
     // SAFETY: live COM object owned by the UI thread; `id` is a valid out-pointer.
     unsafe { webview.webview().cast::<ICoreWebView2_20>().ok()?.FrameId(&mut id).ok()? };
     Some(id)
+}
+
+/// The tallest screenshot taken, in device pixels: very long (or endless)
+/// pages are cut off here rather than using huge amounts of memory.
+const MAX_SCREENSHOT_PIXELS: f64 = 16_000.0;
+
+/// Takes a picture of the whole page, not just the part on screen, as PNG,
+/// using the engine's own capture (DevTools protocol). `device_scale` is the
+/// page's pixels per CSS pixel (screen scaling times zoom). The image (or why
+/// not) arrives later as a `Screenshot` event.
+pub fn capture_full_page(
+    webview: &WebView,
+    tab: TabId,
+    device_scale: f64,
+    proxy: EventLoopProxy<UserEvent>,
+) -> windows::core::Result<()> {
+    let core = webview.webview();
+    let capture_core = core.clone();
+    let metrics_handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, json| {
+        let fail = |proxy: &EventLoopProxy<UserEvent>, why: &str| {
+            let _ = proxy.send_event(UserEvent::Screenshot { id: tab, result: Err(why.to_string()) });
+        };
+        if result.is_err() {
+            fail(&proxy, "the page couldn't be measured");
+            return Ok(());
+        }
+        let metrics: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+        let size = &metrics["cssContentSize"];
+        let width = size["width"].as_f64().unwrap_or(0.0).max(1.0);
+        let max_height = MAX_SCREENSHOT_PIXELS / device_scale.max(0.25);
+        let height = size["height"].as_f64().unwrap_or(0.0).clamp(1.0, max_height);
+        let params = format!(
+            r#"{{"format":"png","captureBeyondViewport":true,"clip":{{"x":0,"y":0,"width":{width},"height":{height},"scale":1}}}}"#
+        );
+        let capture_proxy = proxy.clone();
+        let capture_handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, json| {
+            let image = match result {
+                Ok(()) => serde_json::from_str::<serde_json::Value>(&json)
+                    .ok()
+                    .and_then(|v| v["data"].as_str().and_then(decode_base64))
+                    .ok_or_else(|| "the picture couldn't be read".to_string()),
+                Err(_) => Err("the page couldn't be captured".to_string()),
+            };
+            let _ = capture_proxy.send_event(UserEvent::Screenshot { id: tab, result: image });
+            Ok(())
+        }));
+        // SAFETY: live COM object on the UI thread; strings outlive the call.
+        let sent = unsafe {
+            capture_core.CallDevToolsProtocolMethod(
+                &HSTRING::from("Page.captureScreenshot"),
+                &HSTRING::from(params),
+                &capture_handler,
+            )
+        };
+        if sent.is_err() {
+            fail(&proxy, "the page couldn't be captured");
+        }
+        Ok(())
+    }));
+    // SAFETY: live COM object on the UI thread; strings outlive the call.
+    unsafe {
+        core.CallDevToolsProtocolMethod(&HSTRING::from("Page.getLayoutMetrics"), &HSTRING::from("{}"), &metrics_handler)
+    }
+}
+
+/// Decodes standard base64 (as the DevTools protocol sends images).
+pub fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    fn value(c: u8) -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    }
+    let bytes: Vec<u8> = text.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    let trimmed = bytes.strip_suffix(b"==").or_else(|| bytes.strip_suffix(b"=")).unwrap_or(&bytes);
+    let mut out = Vec::with_capacity(trimmed.len() * 3 / 4);
+    for chunk in trimmed.chunks(4) {
+        let mut n = 0u32;
+        for (i, &c) in chunk.iter().enumerate() {
+            n |= value(c)? << (18 - 6 * i);
+        }
+        match chunk.len() {
+            4 => out.extend_from_slice(&[(n >> 16) as u8, (n >> 8) as u8, n as u8]),
+            3 => out.extend_from_slice(&[(n >> 16) as u8, (n >> 8) as u8]),
+            2 => out.push((n >> 16) as u8),
+            _ => return None,
+        }
+    }
+    Some(out)
 }
 
 /// Asks WebView2 which page processes exist and which pages (main frames)
@@ -583,5 +690,23 @@ pub fn apply_privacy(
         settings.SetIsGeneralAutofillEnabled(autofill)?;
         let profile = core.cast::<ICoreWebView2_13>()?.Profile()?.cast::<ICoreWebView2Profile3>()?;
         profile.SetPreferredTrackingPreventionLevel(level)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_base64;
+
+    #[test]
+    fn decodes_base64() {
+        assert_eq!(decode_base64("").unwrap(), b"");
+        assert_eq!(decode_base64("TQ==").unwrap(), b"M");
+        assert_eq!(decode_base64("TWE=").unwrap(), b"Ma");
+        assert_eq!(decode_base64("TWFu").unwrap(), b"Man");
+        assert_eq!(decode_base64("aGVsbG8g\nd29ybGQ=").unwrap(), b"hello world");
+        // The start of every PNG file.
+        assert_eq!(decode_base64("iVBORw0KGgo=").unwrap(), [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert!(decode_base64("ab$d").is_none());
+        assert!(decode_base64("a").is_none());
     }
 }

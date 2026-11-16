@@ -49,6 +49,7 @@ fn main() {
 pub(crate) const RESTORE_ARG: &str = "--restore-session";
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    trace("process started");
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let first_arg = std::env::args().nth(1);
     let restoring = first_arg.as_deref() == Some(RESTORE_ARG);
@@ -74,11 +75,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_inner_size(LogicalSize::new(1280.0, 800.0))
         .with_min_inner_size(LogicalSize::new(420.0, 300.0))
         .build(&event_loop)?;
+    trace("window created");
 
     let mut browser = Browser::new(&event_loop, window, event_loop.create_proxy(), data_dir(), restoring)?;
+    trace("browser UI web view created");
 
     // `rust-browser.exe <url or search>` opens that instead of the home page.
     browser.open_initial_tabs(cli_arg.as_deref())?;
+    trace("first tab created");
     browser.start_memory_saver();
     updater::clean_up_old_download();
 
@@ -150,6 +154,22 @@ fn data_dir() -> Option<PathBuf> {
 pub(crate) fn profile_override() -> Option<PathBuf> {
     let dir = PathBuf::from(std::env::var_os("RUST_BROWSER_PROFILE")?);
     dir.is_absolute().then_some(dir)
+}
+
+/// Start-up timing for performance work: when the `RUST_BROWSER_TRACE`
+/// environment variable names a file, each call appends "<ms since start>
+/// <what>" to it. Does nothing otherwise.
+pub(crate) fn trace(what: &str) {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static START: OnceLock<Instant> = OnceLock::new();
+    static FILE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let start = *START.get_or_init(Instant::now);
+    let Some(path) = FILE.get_or_init(|| std::env::var_os("RUST_BROWSER_TRACE").map(PathBuf::from)) else { return };
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = writeln!(file, "{:>6} ms  {what}", start.elapsed().as_millis());
+    }
 }
 
 #[cfg(windows)]

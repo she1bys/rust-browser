@@ -330,6 +330,9 @@
   }
   #newtab { width: 28px; height: 28px; margin-bottom: 5px; border-radius: 8px; }
   #newtab svg { width: 17px; height: 17px; stroke-width: 1.8; }
+  #tab-search-btn { width: 28px; height: 28px; margin: 0 0 5px 2px; border-radius: 8px; color: var(--muted); }
+  #tab-search-btn:hover { color: var(--text); }
+  #tab-search-btn svg { width: 16px; height: 16px; stroke-width: 2; }
 
   /* Empty tab-strip space drags the window; the window buttons sit at its right end. */
   #drag { flex: 1; align-self: stretch; min-width: 48px; }
@@ -1137,6 +1140,9 @@
     <button id="newtab" class="icon-btn" title="New tab (Ctrl+T)" aria-label="New tab">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
     </button>
+    <button id="tab-search-btn" class="icon-btn" title="Search tabs (Ctrl+Shift+A)" aria-label="Search tabs">
+      <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>
+    </button>
     <div id="drag"></div>
     <div id="caption">
       <button id="win-min" title="Minimize" aria-label="Minimize">
@@ -1254,6 +1260,13 @@
               <div class="row-hint">Default zoom level for web pages.</div>
             </div>
             <select id="set-zoom" class="select" aria-label="Page zoom"></select>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Zoom per site</div>
+              <div id="site-zoom-hint" class="row-hint">When you zoom a page in or out, every page of that site opens at the same zoom next time.</div>
+            </div>
+            <button id="site-zoom-reset" class="btn">Reset zoom for all sites</button>
           </div>
           <div class="row">
             <div class="row-text">
@@ -1963,6 +1976,7 @@
   $('set-home-page').addEventListener('change', (e) => patchSettings({ homePage: e.target.value }));
   $('set-home-page').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
   $('set-download-change').addEventListener('click', () => send({ type: 'chooseDownloadFolder' }));
+  $('site-zoom-reset').addEventListener('click', () => send({ type: 'resetSiteZoom' }));
   $('set-download-default').addEventListener('click', () => send({ type: 'resetDownloadFolder' }));
 
   function confirmButton(button, confirmLabel, action) {
@@ -2024,6 +2038,14 @@
       sw.setAttribute('aria-checked', String(!!s[sw.dataset.setting]));
     }
     $zoom.value = String(s.zoomPercent);
+    {
+      const sites = Object.keys(s.siteZoom || {});
+      const base = 'When you zoom a page in or out, every page of that site opens at the same zoom next time.';
+      $('site-zoom-hint').textContent = sites.length === 0 ? base
+        : base + ' ' + (sites.length === 1 ? '1 site has' : sites.length + ' sites have') + ' its own zoom: '
+          + sites.slice(0, 4).map((h) => h + ' ' + s.siteZoom[h] + '%').join(', ') + (sites.length > 4 ? '…' : '') + '.';
+      $('site-zoom-reset').disabled = sites.length === 0;
+    }
     $('set-home-button').setAttribute('aria-checked', String(!!s.showHomeButton));
     if (document.activeElement !== $('set-home-page')) $('set-home-page').value = s.homePage || '';
     $('set-download-path').textContent = s.downloadDir || 'Your Windows Downloads folder';
@@ -2766,6 +2788,7 @@
   const command = (name) => send({ type: 'command', command: name });
 
   $('newtab').addEventListener('click', () => send({ type: 'newTab' }));
+  $('tab-search-btn').addEventListener('click', () => command('searchTabs'));
   $('back').addEventListener('click', () => send({ type: 'back' }));
   $('forward').addEventListener('click', () => send({ type: 'forward' }));
   $('reload').addEventListener('click', () => {
@@ -2818,6 +2841,8 @@
     else if (ctrl && e.shiftKey && k === 'b') command('toggleBookmarksBar');
     else if (e.key === 'F11' && !e.ctrlKey && !e.altKey) command('fullscreen');
     else if (e.key === 'F9' && !e.ctrlKey && !e.altKey && !e.shiftKey) command('readerMode');
+    else if (ctrl && e.shiftKey && k === 'a') command('searchTabs');
+    else if (ctrl && e.shiftKey && k === 's') command('screenshot');
     else if (e.key === 'F12' && !e.ctrlKey && !e.altKey) command('devTools');
     else if (ctrl && !e.shiftKey && k === 'f') command('find');
     else if (ctrl && !e.shiftKey && k === 'p') command('print');

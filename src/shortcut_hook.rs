@@ -32,6 +32,8 @@ pub fn shortcut_for(key: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Shor
     const F9: u32 = VK_F9 as u32;
     match (ctrl, shift, alt, key) {
         (false, false, false, F9) => Some(Shortcut::Reader),
+        (true, true, false, k) if k == 'A' as u32 => Some(Shortcut::SearchTabs),
+        (true, true, false, k) if k == 'S' as u32 => Some(Shortcut::Screenshot),
         (true, false, false, k) if k == 'T' as u32 => Some(Shortcut::NewTab),
         (true, true, false, k) if k == 'N' as u32 => Some(Shortcut::NewPrivateTab),
         (true, true, false, k) if k == 'O' as u32 => Some(Shortcut::Bookmarks),
@@ -129,6 +131,9 @@ mod tests {
         assert_eq!(shortcut_for('S' as u32, true, false, false), Some(Shortcut::SavePage));
         assert_eq!(shortcut_for(VK_F11 as u32, false, false, false), Some(Shortcut::Fullscreen));
         assert_eq!(shortcut_for(VK_F9 as u32, false, false, false), Some(Shortcut::Reader));
+        assert_eq!(shortcut_for('A' as u32, true, true, false), Some(Shortcut::SearchTabs));
+        assert_eq!(shortcut_for('S' as u32, true, true, false), Some(Shortcut::Screenshot));
+        assert_eq!(shortcut_for('S' as u32, true, false, false), Some(Shortcut::SavePage), "Ctrl+S is still Save");
         assert_eq!(shortcut_for('F' as u32, false, false, true), Some(Shortcut::Menu));
         assert_eq!(shortcut_for('E' as u32, false, false, true), Some(Shortcut::Menu));
     }

@@ -1,6 +1,7 @@
 //! User settings, saved as JSON in `%LOCALAPPDATA%\RustBrowser\settings.json`.
 
 use std::{
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
     time::Duration,
@@ -189,7 +190,13 @@ pub struct Settings {
     /// The built-in ad and tracker blocker (see `adblock.rs`).
     pub block_ads: bool,
     pub efficiency_mode: EfficiencyMode,
+    /// Zoom chosen for particular websites (host without "www." → percent).
+    /// Sites not listed use `zoom_percent`. Set by zooming a page.
+    pub site_zoom: BTreeMap<String, u16>,
 }
+
+/// The lowest and highest page zoom kept for a website, in percent.
+pub const SITE_ZOOM_RANGE: std::ops::RangeInclusive<u16> = 25..=500;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -212,6 +219,7 @@ impl Default for Settings {
             check_for_updates: true,
             block_ads: true,
             efficiency_mode: EfficiencyMode::Auto,
+            site_zoom: BTreeMap::new(),
         }
     }
 }
@@ -250,7 +258,23 @@ impl Settings {
         if !ZOOM_LEVELS.contains(&settings.zoom_percent) {
             settings.zoom_percent = 100;
         }
+        settings.site_zoom.retain(|host, zoom| !host.is_empty() && SITE_ZOOM_RANGE.contains(zoom));
         settings
+    }
+
+    /// The zoom for a page of `host` (as given by [`zoom_site`]).
+    pub fn zoom_for(&self, host: Option<&str>) -> u16 {
+        host.and_then(|h| self.site_zoom.get(h).copied()).unwrap_or(self.zoom_percent)
+    }
+
+    /// Remembers that `host` is shown at `percent`: forgotten again when that's
+    /// the normal zoom. Returns `true` if anything changed.
+    pub fn remember_site_zoom(&mut self, host: &str, percent: u16) -> bool {
+        if percent == self.zoom_percent || !SITE_ZOOM_RANGE.contains(&percent) {
+            self.site_zoom.remove(host).is_some()
+        } else {
+            self.site_zoom.insert(host.to_string(), percent) != Some(percent)
+        }
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
@@ -264,10 +288,6 @@ impl Settings {
         } else {
             self.home_page.clone()
         }
-    }
-
-    pub fn zoom_factor(&self) -> f64 {
-        f64::from(self.zoom_percent) / 100.0
     }
 
     /// Applies a change. Invalid values are ignored. Returns `true` if
@@ -331,6 +351,13 @@ impl Settings {
         }
         *self != before
     }
+}
+
+/// The website whose zoom a page uses: its host without a leading "www.", or
+/// `None` for pages that aren't websites (the New Tab page, files).
+pub fn zoom_site(url: &str) -> Option<String> {
+    let host = crate::adblock::host_of(url)?;
+    Some(host.strip_prefix("www.").unwrap_or(&host).to_string())
 }
 
 /// Writes to a temporary file first, then renames it over the real one, so a
@@ -444,6 +471,29 @@ mod tests {
     }
 
     #[test]
+    fn remembers_zoom_per_site() {
+        let mut s = Settings::default();
+        assert_eq!(zoom_site("https://www.Example.com/page").as_deref(), Some("example.com"));
+        assert_eq!(zoom_site("https://news.example.com/").as_deref(), Some("news.example.com"));
+        assert_eq!(zoom_site("about:blank"), None);
+        assert_eq!(s.zoom_for(Some("example.com")), 100);
+        assert!(s.remember_site_zoom("example.com", 150));
+        assert!(!s.remember_site_zoom("example.com", 150), "same zoom again is no change");
+        assert_eq!(s.zoom_for(Some("example.com")), 150);
+        assert_eq!(s.zoom_for(Some("other.org")), 100);
+        assert_eq!(s.zoom_for(None), 100);
+        // Going back to the normal zoom forgets the site.
+        assert!(s.remember_site_zoom("example.com", 100));
+        assert!(s.site_zoom.is_empty());
+        assert!(!s.remember_site_zoom("example.com", 9000), "out of range is ignored");
+        // Damaged entries in the file are dropped.
+        let path = temp_file("settings-site-zoom");
+        fs::write(&path, r#"{"siteZoom":{"ok.com":125,"bad.com":5000,"":110}}"#).unwrap();
+        assert_eq!(Settings::load(&path).site_zoom, BTreeMap::from([("ok.com".to_string(), 125)]));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
     fn zoom_steps_up_and_down() {
         assert_eq!(zoom_step(100, true), 110);
         assert_eq!(zoom_step(100, false), 90);
@@ -498,6 +548,7 @@ mod tests {
             check_for_updates: false,
             block_ads: false,
             efficiency_mode: EfficiencyMode::On,
+            site_zoom: BTreeMap::from([("example.com".to_string(), 150)]),
         };
         saved.save(&path).unwrap();
         assert_eq!(Settings::load(&path), saved);
@@ -567,6 +618,6 @@ mod tests {
     fn zoom_levels_include_100_and_convert() {
         assert!(ZOOM_LEVELS.contains(&100));
         let s = Settings { zoom_percent: 125, ..Settings::default() };
-        assert!((s.zoom_factor() - 1.25).abs() < f64::EPSILON);
+        assert_eq!(s.zoom_for(None), 125, "pages without a site of their own use the normal zoom");
     }
 }

@@ -35,7 +35,7 @@ use crate::ipc::{
     TabId, UiMsg, UpdateEvent, UserEvent, WindowAction,
 };
 use crate::memory;
-use crate::menu::{MenuEntry, MenuKind, PopupMenu};
+use crate::menu::{self, MenuEntry, MenuKind, PopupMenu};
 use crate::newtab::{self, NewTabState, NEW_TAB_URL};
 use crate::session::Session;
 use crate::settings::{
@@ -65,6 +65,48 @@ const UPDATE_RETRY_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const UI_HTML: &str = include_str!("../ui/index.html");
 /// Reader mode, run inside the page (see `toggle_reader`).
 const READER_JS: &str = include_str!("../ui/reader.js");
+
+/// The Windows Downloads folder (`%USERPROFILE%\Downloads`).
+fn downloads_folder() -> Option<PathBuf> {
+    let dir = PathBuf::from(std::env::var_os("USERPROFILE")?).join("Downloads");
+    dir.is_dir().then_some(dir)
+}
+
+/// Local date and time as `2026-11-16 14.05.09` (file-name safe).
+fn local_timestamp() -> String {
+    use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetLocalTime};
+    let mut t =
+        SYSTEMTIME { wYear: 0, wMonth: 0, wDayOfWeek: 0, wDay: 0, wHour: 0, wMinute: 0, wSecond: 0, wMilliseconds: 0 };
+    // SAFETY: `t` is a valid, writable SYSTEMTIME.
+    unsafe { GetLocalTime(&mut t) };
+    format!("{:04}-{:02}-{:02} {:02}.{:02}.{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
+}
+
+/// "Screenshot example.com 2026-11-16 14.05.09.png", with characters that
+/// aren't allowed in Windows file names left out.
+fn screenshot_file_name(site: &str, timestamp: &str) -> String {
+    let site: String =
+        site.chars().filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')).collect();
+    let site = site.trim();
+    if site.is_empty() {
+        format!("Screenshot {timestamp}.png")
+    } else {
+        format!("Screenshot {site} {timestamp}.png")
+    }
+}
+
+/// `folder\name`, or `folder\name (2)` etc. if that file already exists.
+fn unique_path(folder: &std::path::Path, name: &str) -> PathBuf {
+    let first = folder.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+    (2..)
+        .map(|n| folder.join(if ext.is_empty() { format!("{stem} ({n})") } else { format!("{stem} ({n}).{ext}") }))
+        .find(|p| !p.exists())
+        .unwrap_or(first)
+}
 
 /// An ordinary web page (reader mode and the like make sense on it).
 fn is_web_page(url: &str) -> bool {
@@ -174,9 +216,31 @@ struct TabView<'a> {
 
 /// What the button on a notice does.
 enum NoticeAction {
-    OpenUrl { url: String, private: bool },
+    OpenUrl {
+        url: String,
+        private: bool,
+    },
     Reload(TabId),
     InstallUpdate,
+    /// Show a saved file in File Explorer.
+    ShowFile(PathBuf),
+}
+
+/// One open tab in tab search (see `renderTabSearch` in `ui/menu.html`).
+#[derive(Serialize)]
+struct TabSearchRow<'a> {
+    id: TabId,
+    title: &'a str,
+    site: String,
+    active: bool,
+    private: bool,
+    audible: bool,
+    sleeping: bool,
+}
+
+#[derive(Serialize)]
+struct TabSearchView<'a> {
+    tabs: Vec<TabSearchRow<'a>>,
 }
 
 /// Where the browser is with updating itself.
@@ -446,6 +510,7 @@ impl Browser {
         };
         let newtab = Arc::new(RwLock::new(NewTabState::from_sources(&settings, &bookmarks, &history, lite)));
 
+        crate::trace("settings, bookmarks and history loaded");
         let mut web_context = WebContext::new(data_dir);
         window.set_theme(window_theme(settings.theme));
 
@@ -751,6 +816,7 @@ impl Browser {
                 }
             }
             UserEvent::PageLoad { id, finished, url } => {
+                crate::trace(&format!("tab {id}: page {} {url}", if finished { "loaded" } else { "started" }));
                 let mut changed = false;
                 let mut record_visit = None;
                 let norm_url = newtab::normalize_url(&url);
@@ -776,6 +842,7 @@ impl Browser {
                         record_visit = Some((tab.url.clone(), tab.title.clone()));
                     }
                 }
+                self.apply_site_zoom(id);
                 if let Some((u, t)) = record_visit {
                     if self.history.record(&u, &t) {
                         self.save_history();
@@ -832,7 +899,11 @@ impl Browser {
             }
             UserEvent::ZoomChanged { id, factor } => {
                 let pct = (factor * 100.0).round().clamp(25.0, 500.0) as u16;
+                let mut site = None;
                 if let Some(tab) = self.tab_mut(id) {
+                    if !tab.private {
+                        site = settings::zoom_site(&tab.url);
+                    }
                     if tab.zoom_percent != pct {
                         tab.zoom_percent = pct;
                         if self.active == Some(id) {
@@ -841,6 +912,12 @@ impl Browser {
                                 self.refresh_main_menu();
                             }
                         }
+                    }
+                }
+                // Remember it for the site (private tabs leave no trace).
+                if let Some(site) = site {
+                    if self.settings.remember_site_zoom(&site, pct) {
+                        self.save_settings_quietly();
                     }
                 }
             }
@@ -889,6 +966,10 @@ impl Browser {
                 }
             }
             UserEvent::MenuReady => self.menu.on_ready(),
+            UserEvent::Screenshot { id, result } => match result {
+                Ok(image) => self.save_screenshot(id, image),
+                Err(e) => self.show_notice(&format!("Couldn't take a screenshot: {e}"), true),
+            },
             UserEvent::AdsBlocked(id) => {
                 if let Some(tab) = self.tab(id) {
                     tab.ads_notified.set(false);
@@ -980,6 +1061,7 @@ impl Browser {
     fn handle_ui(&mut self, msg: UiMsg) {
         match msg {
             UiMsg::Ready => {
+                crate::trace("browser UI loaded");
                 self.send_init();
                 self.sync();
                 self.update_memory_button(true);
@@ -1055,6 +1137,7 @@ impl Browser {
                 }
             }
             UiMsg::CheckForUpdates => self.check_for_updates(true),
+            UiMsg::ResetSiteZoom => self.reset_site_zoom(),
             UiMsg::ImportFrom { source } => self.import_from(source),
             UiMsg::InstallUpdate => self.install_update(),
             UiMsg::CloseTab { id } => self.close_tab(id),
@@ -1188,6 +1271,8 @@ impl Browser {
             Shortcut::ToggleBookmarksBar => self.toggle_bookmarks_bar(),
             Shortcut::Fullscreen => self.run_command(BrowserCommand::Fullscreen),
             Shortcut::Reader => self.run_command(BrowserCommand::ReaderMode),
+            Shortcut::SearchTabs => self.run_command(BrowserCommand::SearchTabs),
+            Shortcut::Screenshot => self.run_command(BrowserCommand::Screenshot),
             Shortcut::SavePage => self.run_command(BrowserCommand::SavePage),
             Shortcut::Menu => {
                 if self.is_fullscreen() {
@@ -1254,6 +1339,8 @@ impl Browser {
             C::ResetZoom => self.reset_active_zoom(),
             C::Fullscreen => self.toggle_window_fullscreen(),
             C::ReaderMode => self.toggle_reader(),
+            C::SearchTabs => self.show_tab_search(),
+            C::Screenshot => self.take_screenshot(),
             C::ImportData => self.import_from_other_browsers(),
             C::Exit => self.request_close(),
             // These act on the page, or filter when viewing Downloads / Bookmarks / History.
@@ -1323,6 +1410,7 @@ impl Browser {
                 "reopen",
                 !self.closed_tabs.is_empty(),
             ),
+            MenuEntry::item(C::SearchTabs, "Search tabs…", "Ctrl+Shift+A", "searchTabs", true),
             MenuEntry::item(
                 C::ToggleSplitView,
                 if in_split { "Close split view" } else { "Split view" },
@@ -1376,6 +1464,13 @@ impl Browser {
                 "Reader mode",
                 "F9",
                 "reader",
+                has_view && self.active_tab().is_some_and(|t| is_web_page(&t.url)),
+            ),
+            MenuEntry::item(
+                C::Screenshot,
+                "Screenshot page",
+                "Ctrl+Shift+S",
+                "screenshot",
                 has_view && self.active_tab().is_some_and(|t| is_web_page(&t.url)),
             ),
             MenuEntry::item(C::Print, "Print…", "Ctrl+P", "print", has_page && has_view),
@@ -1901,6 +1996,88 @@ impl Browser {
                 }
             }
             NoticeAction::InstallUpdate => self.install_update(),
+            NoticeAction::ShowFile(path) => {
+                spawn_explorer(Command::new("explorer.exe").raw_arg(format!("/select,\"{}\"", path.display())))
+            }
+        }
+    }
+
+    // ---- tab search -----------------------------------------------------
+
+    /// Ctrl+Shift+A: a list of the open tabs to filter by typing, centred
+    /// under the tab strip.
+    fn show_tab_search(&mut self) {
+        if (self.menu.is_visible() && self.menu.kind() == Some(MenuKind::TabSearch)) || self.menu.recently_closed() {
+            self.hide_menu();
+            return;
+        }
+        if self.is_fullscreen() {
+            self.exit_fullscreen();
+        }
+        let view = TabSearchView {
+            tabs: self
+                .tabs
+                .iter()
+                .map(|t| TabSearchRow {
+                    id: t.id,
+                    title: &t.title,
+                    site: if t.url == NEW_TAB_URL || t.url.is_empty() {
+                        "New Tab".to_string()
+                    } else if is_downloads_url(&t.url) {
+                        "Downloads".to_string()
+                    } else {
+                        site_label(&t.url)
+                    },
+                    active: Some(t.id) == self.active,
+                    private: t.private,
+                    audible: t.audible,
+                    sleeping: t.webview.is_none() && !is_downloads_url(&t.url),
+                })
+                .collect(),
+        };
+        let Ok(json) = serde_json::to_string(&view) else { return };
+        let width = f64::from(self.window.inner_size().width) / self.window.scale_factor();
+        let (sx, sy) = self.to_screen((width + menu::TAB_SEARCH_WIDTH) / 2.0, 40.0);
+        self.menu.show_tab_search(&self.window, sx, sy, view.tabs.len(), &json);
+    }
+
+    // ---- screenshots ----------------------------------------------------
+
+    /// Ctrl+Shift+S: saves a picture of the whole active page (PNG) in the
+    /// downloads folder.
+    fn take_screenshot(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(tab) = self.tab(id) else { return };
+        if !is_web_page(&tab.url) {
+            return;
+        }
+        let Some(webview) = &tab.webview else { return };
+        let scale = self.window.scale_factor() * f64::from(tab.zoom_percent) / 100.0;
+        match webview_hooks::capture_full_page(webview, id, scale, self.proxy.clone()) {
+            Ok(()) => self.show_notice("Taking a screenshot…", false),
+            Err(e) => self.show_notice(&format!("Couldn't take a screenshot: {e}"), true),
+        }
+    }
+
+    fn save_screenshot(&mut self, id: TabId, image: Vec<u8>) {
+        // The site's name without "www." or a port number.
+        let site = self.tab(id).and_then(|t| settings::zoom_site(&t.url)).unwrap_or_default();
+        let folder = self.settings.download_dir.clone().filter(|d| d.is_dir()).or_else(downloads_folder);
+        let Some(folder) = folder else {
+            self.show_notice("Couldn't find a folder to save the screenshot in", true);
+            return;
+        };
+        let path = unique_path(&folder, &screenshot_file_name(&site, &local_timestamp()));
+        match std::fs::write(&path, image) {
+            Ok(()) => {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.show_notice_with_action(
+                    &format!("Screenshot saved: {name}"),
+                    "Show",
+                    NoticeAction::ShowFile(path),
+                );
+            }
+            Err(e) => self.show_notice(&format!("Couldn't save the screenshot: {e}"), true),
         }
     }
 
@@ -2135,7 +2312,21 @@ impl Browser {
                 log_err(wv.zoom(f64::from(next) / 100.0), "zoom");
             }
         }
+        self.remember_zoom_of(id);
         self.sync();
+    }
+
+    /// Saves tab `id`'s current zoom as its site's zoom (not for private tabs).
+    fn remember_zoom_of(&mut self, id: TabId) {
+        let Some(tab) = self.tab(id) else { return };
+        if tab.private || tab.webview.is_none() {
+            return;
+        }
+        let Some(site) = settings::zoom_site(&tab.url) else { return };
+        let zoom = tab.zoom_percent;
+        if self.settings.remember_site_zoom(&site, zoom) {
+            self.save_settings_quietly();
+        }
     }
 
     // ---- crashes --------------------------------------------------------
@@ -2231,12 +2422,16 @@ impl Browser {
                 }
             }
         }
-        if self.settings.zoom_percent != before.zoom_percent {
-            let factor = self.settings.zoom_factor();
+        if self.settings.zoom_percent != before.zoom_percent || self.settings.site_zoom != before.site_zoom {
+            // Every page takes the new normal zoom, except sites with their own.
             for tab in self.tabs.iter_mut().chain(&mut self.background) {
-                tab.zoom_percent = self.settings.zoom_percent;
-                if let Some(wv) = &tab.webview {
-                    log_err(wv.zoom(factor), "set zoom");
+                let site = if tab.private { None } else { settings::zoom_site(&tab.url) };
+                let zoom = self.settings.zoom_for(site.as_deref());
+                if tab.zoom_percent != zoom {
+                    tab.zoom_percent = zoom;
+                    if let Some(wv) = &tab.webview {
+                        log_err(wv.zoom(f64::from(zoom) / 100.0), "set zoom");
+                    }
                 }
             }
         }
@@ -2605,14 +2800,63 @@ impl Browser {
 
     // ---- zoom -----------------------------------------------------------
 
-    fn reset_active_zoom(&mut self) {
-        let Some(id) = self.active else { return };
+    /// Gives tab `id` the zoom of the site it's showing (or the normal zoom).
+    /// Called as pages load, so moving to another site changes the zoom.
+    fn apply_site_zoom(&mut self, id: TabId) {
+        let Some(tab) = self.tab(id) else { return };
+        let site = if tab.private { None } else { settings::zoom_site(&tab.url) };
+        // Private tabs keep whatever zoom they're at; they don't remember sites.
+        if tab.private && site.is_none() {
+            return;
+        }
+        let zoom = self.settings.zoom_for(site.as_deref());
+        if tab.zoom_percent == zoom {
+            return;
+        }
         if let Some(tab) = self.tab_mut(id) {
-            tab.zoom_percent = 100;
+            tab.zoom_percent = zoom;
             if let Some(wv) = &tab.webview {
-                log_err(wv.zoom(1.0), "reset zoom");
+                log_err(wv.zoom(f64::from(zoom) / 100.0), "site zoom");
             }
         }
+        if self.active == Some(id) {
+            self.sync();
+        }
+    }
+
+    /// Saves settings changed by browsing (like a site's zoom) without a notice
+    /// unless saving fails.
+    fn save_settings_quietly(&mut self) {
+        if let Some(path) = &self.settings_path {
+            if let Err(e) = self.settings.save(path) {
+                self.show_notice(&format!("Couldn't save settings: {e}"), true);
+            }
+        }
+    }
+
+    /// Settings > "Reset zoom for all sites".
+    fn reset_site_zoom(&mut self) {
+        if self.settings.site_zoom.is_empty() {
+            return;
+        }
+        let before = self.settings.clone();
+        self.settings.site_zoom.clear();
+        self.settings_changed(&before);
+        self.show_notice("Every site is back to the normal zoom", false);
+    }
+
+    /// Ctrl+0: back to the normal zoom (Settings > Page zoom), which also
+    /// forgets the site's own zoom.
+    fn reset_active_zoom(&mut self) {
+        let Some(id) = self.active else { return };
+        let normal = self.settings.zoom_percent;
+        if let Some(tab) = self.tab_mut(id) {
+            tab.zoom_percent = normal;
+            if let Some(wv) = &tab.webview {
+                log_err(wv.zoom(f64::from(normal) / 100.0), "reset zoom");
+            }
+        }
+        self.remember_zoom_of(id);
         self.sync();
     }
 
@@ -3622,6 +3866,25 @@ mod tests {
         assert_eq!(format_bytes(87 * 1024 * 1024 + 400 * 1024), "87.4 MB");
         assert_eq!(format_bytes(412 * 1024 * 1024), "412 MB");
         assert_eq!(format_bytes(1270 * 1024 * 1024), "1.24 GB");
+    }
+
+    #[test]
+    fn screenshot_names_are_safe_and_unique() {
+        assert_eq!(
+            screenshot_file_name("example.com", "2026-11-16 14.05.09"),
+            "Screenshot example.com 2026-11-16 14.05.09.png"
+        );
+        assert_eq!(screenshot_file_name("a:b/c?*", "t"), "Screenshot abc t.png");
+        assert_eq!(screenshot_file_name("  ", "t"), "Screenshot t.png");
+        assert!(local_timestamp().len() == 19 && !local_timestamp().contains(':'));
+
+        let dir = std::env::temp_dir().join(format!("rust-browser-shots-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = unique_path(&dir, "Shot.png");
+        assert_eq!(first, dir.join("Shot.png"));
+        std::fs::write(&first, b"x").unwrap();
+        assert_eq!(unique_path(&dir, "Shot.png"), dir.join("Shot (2).png"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

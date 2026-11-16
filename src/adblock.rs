@@ -141,6 +141,50 @@ const BLOCKED_DOMAINS: &[&str] = &[
     "analytics.tiktok.com",
     "analytics.twitter.com",
     "analytics.yahoo.com",
+    // Found getting through on large news sites (measured with
+    // RUST_BROWSER_TRACE): ad tech, audience measurement and tracking.
+    // Deliberately not here: consent managers, paywalls, payment, video
+    // players, and page-testing tools such as Optimizely, VWO or Google Tag
+    // Manager, whose "anti-flicker" snippets hide the page until their script
+    // loads, so blocking them would make pages slower to appear.
+    "permutive.app",
+    "permutive.com",
+    "hightouch-events.com",
+    "bounceexchange.com",
+    "bouncex.net",
+    "tblcontent.com",
+    "ad-delivery.net",
+    "chartbeat.com",
+    "chartbeat.net",
+    "blueconic.net",
+    "btloader.com",
+    "brightline.tv",
+    "amplitude.com",
+    "dotmetrics.net",
+    "mediamelon.com",
+    "stackadapt.com",
+    "cxense.com",
+    "appsflyersdk.com",
+    "adtrafficquality.google",
+    "brandmetrics.com",
+    "marketo.net",
+    "pixel-config.reddit.com",
+    "nr-data.net",
+    "jwpltx.com",
+    "geoedge.be",
+    "ay.delivery",
+    "pushlycdn.com",
+    "stickyadstv.com",
+    "sail-track.com",
+    "intentiq.com",
+    "2mdn.net",
+    "connatix.com",
+    "aniview.com",
+    "vidazoo.com",
+    "seedtag.com",
+    "rtbhouse.com",
+    "sonobi.com",
+    "zemanta.com",
 ];
 
 fn blocked_set() -> &'static HashSet<&'static str> {

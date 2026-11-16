@@ -34,6 +34,12 @@ $Exe = (Resolve-Path $Exe).Path
 
 $profileDir = Join-Path $env:TEMP ("rust-browser-ui-test-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory $profileDir | Out-Null
+# Downloads and screenshots go into the test profile too.
+$shotsDir = Join-Path $profileDir 'downloads'
+New-Item -ItemType Directory $shotsDir | Out-Null
+@{ downloadDir = $shotsDir } | ConvertTo-Json | ForEach-Object {
+  [IO.File]::WriteAllText((Join-Path $profileDir 'settings.json'), $_, (New-Object Text.UTF8Encoding $false))
+}
 $env:RUST_BROWSER_PROFILE = $profileDir
 $site = "http://127.0.0.1:$Port"
 
@@ -95,6 +101,8 @@ function Press($element) {
     $element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
   } elseif ($patterns -contains 'ExpandCollapsePatternIdentifiers.Pattern') {
     $element.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+  } elseif ($patterns -contains 'SelectionItemPatternIdentifiers.Pattern') {
+    $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
   } else {
     throw "'$($element.Current.Name)' can't be pressed (supports: $($patterns -join ', '))"
   }
@@ -218,10 +226,58 @@ try {
     'article shown without the sidebar'
   }
 
+  Check 'Screenshot saves the whole page as PNG' {
+    Click 'Menu'
+    Click 'Screenshot page*' 'MenuItem'
+    $file = Wait-Until -timeoutMs 15000 -what 'a screenshot file' {
+      Get-ChildItem $shotsDir -Filter 'Screenshot*.png' -ErrorAction SilentlyContinue | Where-Object Length -gt 0 | Select-Object -First 1
+    }
+    $bytes = [IO.File]::ReadAllBytes($file.FullName)
+    if ($bytes[1] -ne 0x50 -or $bytes[2] -ne 0x4E -or $bytes[3] -ne 0x47) { throw 'the file is not a PNG image' }
+    Add-Type -AssemblyName System.Drawing
+    $image = [System.Drawing.Image]::FromFile($file.FullName)
+    $size = "$($image.Width) x $($image.Height) px"; $image.Dispose()
+    "$($file.Name), $size"
+  }
+
+  Check 'Zoom is remembered for the site' {
+    Click 'Menu'
+    Click 'Zoom in*' ''
+    Click 'Menu'
+    Wait-Until -what 'the site zoom to be saved' { $s = Get-Settings; $s -and $s.siteZoom -and $s.siteZoom.'127.0.0.1' -eq 110 } | Out-Null
+    '127.0.0.1 saved at 110%'
+  }
+
   Check 'Ad blocker blocks ads and shows the count' {
     Open-Url "$site/ads.html"
     $badge = Find-Element '*blocked on this page' '' 12000
     $badge.Current.Name
+  }
+
+  Check 'Another page of the same site opens at its zoom' {
+    $zoom = Find-Element 'Reset zoom' '' 6000
+    $text = $zoom.Current.Name
+    try { $text = $zoom.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch {}
+    'zoom badge shown'
+  }
+
+  Check 'A different site opens at the normal zoom' {
+    Open-Url "http://localhost:$Port/article.html"
+    Wait-Until -what 'the localhost page' { (Get-Process -Id $browser.Id).MainWindowTitle -like 'Test article*' } | Out-Null
+    Start-Sleep -Milliseconds 800
+    if (Test-Element 'Reset zoom') { throw 'localhost got the zoom of 127.0.0.1' }
+    'localhost at 100%'
+  }
+
+  Check 'Tab search finds and switches to a tab' {
+    Click 'Search tabs'
+    $box = Find-Element 'Search open tabs' 'Edit'
+    $box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('ads test')
+    $row = Find-Element 'Ads test*'
+    Wait-Until -what 'the filter' { -not (Test-Element 'Test article*, 127.0.0.1*') } | Out-Null
+    Press $row
+    Wait-Until -what 'the Ads test tab' { (Get-Process -Id $browser.Id).MainWindowTitle -like 'Ads test*' } | Out-Null
+    'switched to the Ads test tab'
   }
 
   Check 'Bookmark star saves a bookmark' {

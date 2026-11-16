@@ -41,6 +41,19 @@ pub enum MenuKind {
     Tab(TabId),
     /// The memory manager, under the memory button.
     Memory,
+    /// Tab search (Ctrl+Shift+A): a filterable list of the open tabs.
+    TabSearch,
+}
+
+/// Width of tab search. Its height depends on the number of tabs.
+pub const TAB_SEARCH_WIDTH: f64 = 440.0;
+
+/// Height of tab search for `tabs` tabs: the search box plus up to nine
+/// rows (more scroll). Matches `#ts` in `ui/menu.html`.
+pub fn tab_search_height(tabs: usize) -> f64 {
+    const FIXED: f64 = 62.0;
+    const ROW: f64 = 44.0;
+    FIXED + ROW * tabs.clamp(1, 9) as f64
 }
 
 /// Width of the memory manager. Its height depends on the number of tabs.
@@ -479,6 +492,7 @@ impl PopupMenu {
             MenuKind::Main => MAIN_WIDTH,
             MenuKind::Tab(_) => TAB_WIDTH,
             MenuKind::Memory => MEMORY_WIDTH,
+            MenuKind::TabSearch => TAB_SEARCH_WIDTH,
         };
         let height = measure_height(entries);
         let scale = owner.scale_factor();
@@ -492,7 +506,7 @@ impl PopupMenu {
         self.window.set_inner_size(PhysicalSize::new(phys_w as u32, phys_h as u32));
 
         let tab_id = match kind {
-            MenuKind::Main | MenuKind::Memory => None,
+            MenuKind::Main | MenuKind::Memory | MenuKind::TabSearch => None,
             MenuKind::Tab(id) => Some(id),
         };
         let Ok(json) = serde_json::to_string(&MenuPayload { tab_id, entries }) else { return };
@@ -510,6 +524,18 @@ impl PopupMenu {
         self.window.set_outer_position(PhysicalPosition::new(px, py));
         self.window.set_inner_size(PhysicalSize::new(w as u32, h as u32));
         self.present(MenuKind::Memory, format!("window.menu && window.menu.renderMemory({panel_json})"));
+    }
+
+    /// Opens tab search with its top-right corner at screen point `sx`, `sy`.
+    pub fn show_tab_search(&mut self, owner: &Window, sx: i32, sy: i32, tabs: usize, tabs_json: &str) {
+        self.drop_card_for_menu();
+        let scale = owner.scale_factor();
+        let w = (TAB_SEARCH_WIDTH * scale).round() as i32;
+        let h = (tab_search_height(tabs) * scale).round() as i32;
+        let (px, py) = clamp_position(owner, sx, sy, w, h, true);
+        self.window.set_outer_position(PhysicalPosition::new(px, py));
+        self.window.set_inner_size(PhysicalSize::new(w as u32, h as u32));
+        self.present(MenuKind::TabSearch, format!("window.menu && window.menu.renderTabSearch({tabs_json})"));
     }
 
     /// Refreshes the memory manager's figures while it is open.
@@ -626,6 +652,13 @@ mod tests {
         assert_eq!(memory_panel_height(0), memory_panel_height(1));
         assert!(memory_panel_height(3) > memory_panel_height(2));
         assert_eq!(memory_panel_height(8), memory_panel_height(40), "more than eight rows scroll");
+    }
+
+    #[test]
+    fn tab_search_grows_with_tabs_up_to_nine_rows() {
+        assert_eq!(tab_search_height(0), tab_search_height(1));
+        assert!(tab_search_height(5) > tab_search_height(4));
+        assert_eq!(tab_search_height(9), tab_search_height(100), "more than nine rows scroll");
     }
 
     #[test]

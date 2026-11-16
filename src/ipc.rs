@@ -73,6 +73,10 @@ pub enum Command {
     Fullscreen,
     /// F9: show the page's article as clean, readable text.
     ReaderMode,
+    /// Ctrl+Shift+A: find an open tab by typing.
+    SearchTabs,
+    /// Ctrl+Shift+S: save a picture of the whole page.
+    Screenshot,
     /// Bring in bookmarks and history from Chrome or Edge.
     ImportData,
     Find,
@@ -235,6 +239,8 @@ pub enum UiMsg {
     },
     /// "Check for updates" in Settings > About.
     CheckForUpdates,
+    /// Settings > Appearance: forget every site's own zoom.
+    ResetSiteZoom,
     /// Settings > Import: bring in bookmarks and history from another browser.
     ImportFrom {
         source: ImportSource,
@@ -288,6 +294,10 @@ pub enum Shortcut {
     Fullscreen,
     /// F9: reader mode.
     Reader,
+    /// Ctrl+Shift+A.
+    SearchTabs,
+    /// Ctrl+Shift+S.
+    Screenshot,
     /// Ctrl+S.
     SavePage,
     /// Alt+F or Alt+E: open the main menu.
@@ -377,6 +387,11 @@ pub enum UserEvent {
     MenuReady,
     /// The ad blocker blocked more requests in this tab.
     AdsBlocked(TabId),
+    /// A picture of tab `id`'s whole page, as PNG (or why not).
+    Screenshot {
+        id: TabId,
+        result: Result<Vec<u8>, String>,
+    },
     /// What reader mode did in tab `id`: "opened", "closed" or "none".
     ReaderResult {
         id: TabId,
