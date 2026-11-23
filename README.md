@@ -28,6 +28,8 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
 
 - Chrome-style window: no separate title bar; the tab strip is the title bar, with minimize, maximize and close at its right end. Drag empty tab-strip space to move the window, double-click it to maximize
 - Tabs: open, close, switch, smooth drag-to-reorder, middle-click to close, reopen closed tabs (`Ctrl+Shift+T`), favicons, links that ask for a new window open in a new tab (while sized popups like OAuth logins keep their opener)
+- Pinned tabs (tab right-click menu > "Pin tab"): small icon-only tabs kept at the left end of the strip. They come back every time the browser starts, whatever "On startup" says, and "Close other tabs" / "Close tabs to the right" leave them open
+- Remembers the window: it opens at the size and place it had last time, maximized if it was (or at the default place if that monitor is gone)
 - Split View: view two tabs side-by-side from the toolbar split button, the 3-dot menu, or the tab right-click menu ("Split with current tab"), with a toolbar swap button and automatic pane-focus tracking
 - Memory saver (Settings > Performance: Off / Balanced / Maximum): tabs out of sight are first frozen (scripts pause, nothing is lost), then put to sleep (the page is unloaded and all its memory freed; it reloads when opened, shown faded in the tab strip). Tabs on screen, playing sound, downloading, or private are never put to sleep. Background tabs and a minimized window also ask the engine to use less memory. Measured with five websites open: 318 MB before, 194 MB after one minute, 165 MB once background tabs sleep
 - Ad and tracker blocker (on by default; Settings > Privacy > "Block ads and trackers"): requests to known advertising, tracking and data-broker domains are answered by the browser itself and never downloaded, so pages load faster and use less memory. Measured on a fresh profile: CNN loaded in 5.4 s instead of 25 s with 43% less memory, Forbes in 4.0 s instead of 5.4 s with 29% less. A shield in the address bar shows how many were blocked on the page. A site is never blocked on its own pages. The domain list is built in (`src/adblock.rs`) and WebView2 matches it natively, so ordinary requests pay nothing
@@ -36,6 +38,7 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
 - Zoom per site: zoom a page in or out and every page of that site opens at the same zoom; other sites keep the normal zoom (Settings > Appearance lists them and can reset them all). Private tabs don't remember zoom
 - Reader mode (book button in the address bar, the menu, or `F9`): shows the page's article as clean text, with larger/smaller text and light, sepia or dark backgrounds; `Esc` closes it
 - Import from Chrome, Edge or Brave (menu > "Import from Chrome or Edge…", or Settings > Import): copies bookmarks and recent history; nothing in the other browser changes. Saved passwords can't be imported (WebView2 has no way to add them)
+- Bookmark files: Bookmarks > Export… saves your bookmarks as the standard bookmarks .html file that Chrome, Edge, Firefox and Safari import; Bookmarks > Import… (or Settings > Import > Choose file…) reads one exported by any of them
 - Efficiency mode (Settings > Performance: Auto / On / Off): the strongest memory saver plus no animations or blur effects. Auto turns it on for PCs with 4 GB of memory or less, or two processor threads
 - Light start-up: the window used for menus, the tab hover card and the memory manager only starts its engine process when first needed, and closes it again after two idle minutes (measured: about 33 MB and one process less at start-up)
 - New Tab page: large clock and greeting, search box, shortcut tiles for bookmarks and most visited sites, and "Continue browsing" with recent pages; a plain version in efficiency mode
@@ -45,8 +48,8 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
 - Smooth on high-refresh-rate screens: pages animate at the monitor's own rate (measured 165 frames per second on a 164 Hz monitor, using under 1% of one processor core). The engine's own frame pacing and power saving are left on, which is what keeps it smooth without heat or battery drain. The detected refresh rate is shown in Settings > About
 - Address bar that accepts URLs, bare domains, local/UNC file paths, or a search, with autocomplete suggestions from bookmarks and history
 - Bookmarks and History panels with live search (`Ctrl+F` focuses the search box in Bookmarks, History, and Downloads), plus a bookmark star button (`Ctrl+D`)
-- Main menu (⋮, or `Alt+F`): new tab, new private tab, reopen closed tab, search tabs, split view / swap panes, bookmarks, history, downloads, zoom in/out/reset, full screen, find on page, reader mode, screenshot, print, save page as, developer tools, import, settings, exit
-- Tab right-click menu: new tab to the right, split with current tab / swap or close split panes, reload, duplicate, mute, close, close other tabs, close tabs to the right, reopen closed tab
+- Main menu (⋮, or `Alt+F`): new tab, new private tab, reopen closed tab, search tabs, split view / swap panes, bookmarks, history, downloads, zoom in/out/reset, full screen, find on page, reader mode, screenshot, print, save page as, view page source, developer tools, import, settings, exit
+- Tab right-click menu: new tab to the right, pin / unpin, split with current tab / swap or close split panes, reload, duplicate, mute, close, close other tabs, close tabs to the right, reopen closed tab
 - Private tabs (`Ctrl+Shift+N`): WebView2 InPrivate mode, marked in purple; they leave no history, saved tabs, cookies or download records
 - Pop-up blocker: windows a page opens without a click are blocked, with an "Open" button to allow one anyway
 - Sound indicator on tabs that play audio; click it to mute
@@ -70,7 +73,7 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
 - Downloads tab (`Ctrl+J` or toolbar button): opens in its own tab (`about:downloads`) with live progress, cancel, open file, show in folder, open download folder, remove entries, and clear list; toolbar button animates with a progress ring and count badge when downloads are added or running. A download keeps running if you close its source tab
 - Native Back, Forward (with disabled state), Reload / Stop
 - Light and dark theme, following Windows
-- Cookies, cache, site data, `settings.json`, `downloads.json`, `bookmarks.json`, `history.json` and `session.json` (open tabs) stored in `%LOCALAPPDATA%\RustBrowser`
+- Cookies, cache, site data, `settings.json`, `downloads.json`, `bookmarks.json`, `history.json`, `session.json` (open tabs) and `window.json` (window size and place) stored in `%LOCALAPPDATA%\RustBrowser`
 
 ## Keyboard shortcuts
 
@@ -87,6 +90,8 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
 | Ctrl+Shift+O | Open or close Bookmarks |
 | Ctrl+Shift+B | Show or hide bookmarks bar |
 | Ctrl+S | Save page as |
+| Ctrl+U | View page source (in a new tab) |
+| Ctrl+Shift+Delete | Clear browsing data (opens Settings > Privacy) |
 | Ctrl+W | Close tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+1..8 / Ctrl+9 | Switch to tab 1–8 / last tab |
@@ -211,8 +216,10 @@ src/main.rs            window + event loop
 src/browser.rs         tab manager: creates, shows, hides and closes web views
 src/ipc.rs             messages from the browser UI to Rust
 src/settings.rs        saved settings (theme, startup, search engine, zoom, ...)
-src/session.rs         the open tabs, saved for "continue where you left off"
+src/session.rs         the open tabs (and which are pinned), saved for "continue where you left off"
+src/window_state.rs    the window's size, place and maximized state, saved for next time
 src/bookmarks.rs       saved bookmarks and search
+src/bookmark_file.rs   bookmark files (.html) every browser exports and imports
 src/history.rs         browsing history and search
 src/downloads.rs       the downloads list and its saved file
 src/download_hook.rs   WebView2 download events: progress, completion, cancel

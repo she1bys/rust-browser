@@ -79,6 +79,10 @@ pub enum Command {
     Screenshot,
     /// Bring in bookmarks and history from Chrome or Edge.
     ImportData,
+    /// Ctrl+U: the page's HTML source, in a new tab.
+    ViewSource,
+    /// Ctrl+Shift+Delete: Settings, at "Clear browsing data".
+    ClearBrowsingData,
     Find,
     Print,
     SavePage,
@@ -91,6 +95,8 @@ pub enum Command {
 #[serde(rename_all = "camelCase")]
 pub enum TabCommand {
     NewTabToTheRight,
+    /// Pin the tab (a small icon-only tab kept at the left) or unpin it.
+    TogglePin,
     SplitWithActive,
     SwapSplitView,
     CloseSplitView,
@@ -247,6 +253,10 @@ pub enum UiMsg {
     },
     /// The Update button: download the new version and install it.
     InstallUpdate,
+    /// Bring in bookmarks from a bookmarks file (.html) another browser exported.
+    ImportBookmarksFile,
+    /// Save all bookmarks as a bookmarks file other browsers can import.
+    ExportBookmarks,
 }
 
 /// Progress of an update, reported by the updater's background threads.
@@ -300,6 +310,10 @@ pub enum Shortcut {
     Screenshot,
     /// Ctrl+S.
     SavePage,
+    /// Ctrl+U.
+    ViewSource,
+    /// Ctrl+Shift+Delete.
+    ClearBrowsingData,
     /// Alt+F or Alt+E: open the main menu.
     Menu,
 }
@@ -553,6 +567,8 @@ mod tests {
         assert_eq!(m, UiMsg::MenuCommand { command: Command::ZoomIn, close: false });
         let m: UiMsg = serde_json::from_str(r#"{"type":"tabMenuCommand","id":2,"command":"duplicate"}"#).unwrap();
         assert_eq!(m, UiMsg::TabMenuCommand { id: 2, command: TabCommand::Duplicate });
+        let m: UiMsg = serde_json::from_str(r#"{"type":"tabMenuCommand","id":2,"command":"togglePin"}"#).unwrap();
+        assert_eq!(m, UiMsg::TabMenuCommand { id: 2, command: TabCommand::TogglePin });
         assert_eq!(serde_json::from_str::<UiMsg>(r#"{"type":"closeMenu"}"#).unwrap(), UiMsg::CloseMenu);
         let m: UiMsg = serde_json::from_str(r#"{"type":"showMenu","x":1180.5,"y":38}"#).unwrap();
         assert_eq!(m, UiMsg::ShowMenu { x: 1180.5, y: 38.0 });
@@ -565,10 +581,19 @@ mod tests {
         assert_eq!(serde_json::from_str::<UiMsg>(r#"{"type":"checkForUpdates"}"#).unwrap(), UiMsg::CheckForUpdates);
         assert_eq!(serde_json::from_str::<UiMsg>(r#"{"type":"installUpdate"}"#).unwrap(), UiMsg::InstallUpdate);
         assert_eq!(
+            serde_json::from_str::<UiMsg>(r#"{"type":"importBookmarksFile"}"#).unwrap(),
+            UiMsg::ImportBookmarksFile
+        );
+        assert_eq!(serde_json::from_str::<UiMsg>(r#"{"type":"exportBookmarks"}"#).unwrap(), UiMsg::ExportBookmarks);
+        assert_eq!(
             serde_json::from_str::<UiMsg>(r#"{"type":"importFrom","source":"edge"}"#).unwrap(),
             UiMsg::ImportFrom { source: ImportSource::Edge }
         );
         assert!(serde_json::from_str::<UiMsg>(r#"{"type":"importFrom","source":"netscape"}"#).is_err());
+        let m: UiMsg = serde_json::from_str(r#"{"type":"command","command":"viewSource"}"#).unwrap();
+        assert_eq!(m, UiMsg::Command { command: Command::ViewSource });
+        let m: UiMsg = serde_json::from_str(r#"{"type":"command","command":"clearBrowsingData"}"#).unwrap();
+        assert_eq!(m, UiMsg::Command { command: Command::ClearBrowsingData });
         let m: UiMsg = serde_json::from_str(r#"{"type":"command","command":"readerMode"}"#).unwrap();
         assert_eq!(m, UiMsg::Command { command: Command::ReaderMode });
         assert!(serde_json::from_str::<UiMsg>(r#"{"type":"command","command":"formatDisk"}"#).is_err());

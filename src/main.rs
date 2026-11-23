@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod adblock;
+mod bookmark_file;
 mod bookmarks;
 mod browser;
 mod device;
@@ -21,11 +22,12 @@ mod single_instance;
 mod updater;
 mod url_input;
 mod webview_hooks;
+mod window_state;
 
 use std::path::PathBuf;
 
 use tao::{
-    dpi::LogicalSize,
+    dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
     platform::windows::{IconExtWindows, WindowBuilderExtWindows},
@@ -35,6 +37,7 @@ use tao::{
 use browser::Browser;
 use ipc::UserEvent;
 use single_instance::InstanceRole;
+use window_state::WindowState;
 
 fn main() {
     if let Err(e) = run() {
@@ -66,18 +69,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // keeps its native shadow, rounded corners and side/bottom resize borders.
     // The app icon built into the .exe (resource id 1, see build.rs).
     let icon = tao::window::Icon::from_resource(1, None).ok();
-    let window = WindowBuilder::new()
+    let data_dir = data_dir();
+    // Open where the window was last time, as long as that is still on a
+    // monitor (one may have been unplugged since).
+    let monitors: Vec<window_state::MonitorRect> = event_loop
+        .available_monitors()
+        .map(|m| {
+            let (pos, size) = (m.position(), m.size());
+            (pos.x, pos.y, size.width, size.height)
+        })
+        .collect();
+    let saved_window = data_dir
+        .as_deref()
+        .and_then(|dir| WindowState::load(&dir.join(window_state::FILE_NAME)))
+        .filter(|state| state.is_visible_on(&monitors));
+    let mut builder = WindowBuilder::new()
         .with_decorations(false)
         .with_undecorated_shadow(true)
         .with_window_icon(icon.clone())
         .with_taskbar_icon(icon)
         .with_title("Rust Browser")
-        .with_inner_size(LogicalSize::new(1280.0, 800.0))
-        .with_min_inner_size(LogicalSize::new(420.0, 300.0))
-        .build(&event_loop)?;
+        .with_min_inner_size(LogicalSize::new(420.0, 300.0));
+    builder = match saved_window {
+        Some(state) => builder
+            .with_position(PhysicalPosition::new(state.x, state.y))
+            .with_inner_size(PhysicalSize::new(state.width, state.height))
+            .with_maximized(state.maximized),
+        None => builder.with_inner_size(LogicalSize::new(1280.0, 800.0)),
+    };
+    let window = builder.build(&event_loop)?;
     trace("window created");
 
-    let mut browser = Browser::new(&event_loop, window, event_loop.create_proxy(), data_dir(), restoring)?;
+    let mut browser = Browser::new(&event_loop, window, event_loop.create_proxy(), data_dir, restoring, saved_window)?;
     trace("browser UI web view created");
 
     // `rust-browser.exe <url or search>` opens that instead of the home page.
@@ -107,17 +130,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     WindowEvent::CloseRequested => {
                         browser.request_close();
                         if browser.exit_requested() {
+                            browser.save_window_state();
                             *control_flow = ControlFlow::Exit;
                         }
                     }
                     WindowEvent::Moved(_) => {
                         browser.hide_menu();
                         browser.update_display_rate();
+                        browser.track_window_state();
                     }
                     WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                         browser.hide_menu();
                         browser.layout();
                         browser.update_display_rate();
+                        browser.track_window_state();
                     }
                     _ => {}
                 }
@@ -125,6 +151,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Event::UserEvent(event) => {
                 browser.handle(event);
                 if browser.exit_requested() {
+                    browser.save_window_state();
                     *control_flow = ControlFlow::Exit;
                 }
             }

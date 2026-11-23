@@ -15,7 +15,7 @@ use webview2_com::{
     },
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VK_CONTROL, VK_F11, VK_F9, VK_HOME, VK_MENU, VK_NUMPAD0, VK_OEM_COMMA, VK_SHIFT, VK_TAB,
+    GetKeyState, VK_CONTROL, VK_DELETE, VK_F11, VK_F9, VK_HOME, VK_MENU, VK_NUMPAD0, VK_OEM_COMMA, VK_SHIFT, VK_TAB,
 };
 use wry::{WebView, WebViewExtWindows};
 
@@ -30,7 +30,10 @@ pub fn shortcut_for(key: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Shor
     const NUMPAD0: u32 = VK_NUMPAD0 as u32;
     const F11: u32 = VK_F11 as u32;
     const F9: u32 = VK_F9 as u32;
+    const DELETE: u32 = VK_DELETE as u32;
     match (ctrl, shift, alt, key) {
+        (true, false, false, k) if k == 'U' as u32 => Some(Shortcut::ViewSource),
+        (true, true, false, DELETE) => Some(Shortcut::ClearBrowsingData),
         (false, false, false, F9) => Some(Shortcut::Reader),
         (true, true, false, k) if k == 'A' as u32 => Some(Shortcut::SearchTabs),
         (true, true, false, k) if k == 'S' as u32 => Some(Shortcut::Screenshot),
@@ -136,6 +139,11 @@ mod tests {
         assert_eq!(shortcut_for('S' as u32, true, false, false), Some(Shortcut::SavePage), "Ctrl+S is still Save");
         assert_eq!(shortcut_for('F' as u32, false, false, true), Some(Shortcut::Menu));
         assert_eq!(shortcut_for('E' as u32, false, false, true), Some(Shortcut::Menu));
+        assert_eq!(shortcut_for('U' as u32, true, false, false), Some(Shortcut::ViewSource));
+        assert_eq!(shortcut_for(VK_DELETE as u32, true, true, false), Some(Shortcut::ClearBrowsingData));
+        // Plain Delete and Ctrl+Delete (delete a word) stay with the page.
+        assert_eq!(shortcut_for(VK_DELETE as u32, false, false, false), None);
+        assert_eq!(shortcut_for(VK_DELETE as u32, true, false, false), None);
     }
 
     #[test]

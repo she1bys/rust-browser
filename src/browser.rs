@@ -23,6 +23,7 @@ use wry::{
     WebViewBuilderExtWindows, WebViewExtWindows,
 };
 
+use crate::bookmark_file;
 use crate::bookmarks::{Bookmark, Bookmarks};
 use crate::device;
 use crate::display;
@@ -43,6 +44,7 @@ use crate::settings::{
 };
 use crate::updater::{self, Release};
 use crate::webview_hooks::PopupGestures;
+use crate::window_state::{self, WindowState};
 use crate::{shortcut_hook, url_input, webview_hooks};
 use std::sync::{Arc, RwLock};
 
@@ -130,6 +132,9 @@ struct Tab {
     zoom_percent: u16,
     /// InPrivate: nothing is kept after the browser closes.
     private: bool,
+    /// A small icon-only tab kept at the left end of the strip. Pinned tabs
+    /// always come before every other tab in `Browser::tabs`.
+    pinned: bool,
     /// The page is playing sound.
     audible: bool,
     muted: bool,
@@ -204,6 +209,7 @@ struct TabView<'a> {
     can_go_forward: bool,
     zoom_percent: u16,
     private: bool,
+    pinned: bool,
     audible: bool,
     muted: bool,
     /// Put to sleep (or never loaded): uses no memory until opened.
@@ -478,24 +484,41 @@ pub struct Browser {
     /// Installed memory, and whether this is a low-end PC (see `device.rs`).
     device_memory: Option<u64>,
     low_end_device: bool,
+
+    window_state_path: Option<PathBuf>,
+    /// Where the window is when not maximized, and whether it is maximized.
+    window_state: Option<WindowState>,
+    /// What `window.json` holds now.
+    saved_window_state: Option<WindowState>,
 }
 
 impl Browser {
     /// `data_dir` holds cookies, cache, settings and the downloads list.
     /// `restored_after_crash`: reopen the last session no matter what the
     /// startup setting says, because the engine crashed a moment ago.
+    /// `saved_window`: the window's place from last time, if it was restored.
     pub fn new(
         target: &EventLoopWindowTarget<UserEvent>,
         window: Window,
         proxy: EventLoopProxy<UserEvent>,
         data_dir: Option<PathBuf>,
         restored_after_crash: bool,
+        saved_window: Option<WindowState>,
     ) -> wry::Result<Self> {
         let settings_path = data_dir.as_ref().map(|dir| dir.join("settings.json"));
         let downloads_path = data_dir.as_ref().map(|dir| dir.join("downloads.json"));
         let session_path = data_dir.as_ref().map(|dir| dir.join("session.json"));
         let bookmarks_path = data_dir.as_ref().map(|dir| dir.join("bookmarks.json"));
         let history_path = data_dir.as_ref().map(|dir| dir.join("history.json"));
+        let window_state_path = data_dir.as_ref().map(|dir| dir.join(window_state::FILE_NAME));
+        // The window may open maximized (as it was last time).
+        let window_maximized = window.is_maximized();
+        // Without a saved place the window opened at its default one; start from that.
+        let window_state = saved_window.or_else(|| {
+            let pos = window.outer_position().ok()?;
+            let size = window.inner_size();
+            Some(WindowState { x: pos.x, y: pos.y, width: size.width, height: size.height, maximized: false })
+        });
 
         let settings = settings_path.as_deref().map(Settings::load).unwrap_or_default();
         let downloads = downloads_path.as_deref().map(Downloads::load).unwrap_or_default();
@@ -563,7 +586,7 @@ impl Browser {
             split: None,
             next_id: 1,
             proxy,
-            maximized: false,
+            maximized: window_maximized,
             fullscreen_tab: None,
             window_fullscreen: false,
             exit_requested: false,
@@ -611,6 +634,9 @@ impl Browser {
             can_update_itself: updater::can_update_itself(),
             device_memory,
             low_end_device,
+            window_state_path,
+            window_state,
+            saved_window_state: saved_window,
         })
     }
 
@@ -635,30 +661,41 @@ impl Browser {
         });
     }
 
-    /// Opens the first tab(s): `input` (a URL or search from the command
-    /// line) if given, otherwise whatever "On startup" in Settings says.
+    /// Opens the first tab(s). Pinned tabs always come back; with "Continue
+    /// where you left off" (or after an engine crash) so do all the others.
+    /// Then `input` (a URL or search from the command line) opens in a new
+    /// tab if given; otherwise the last active tab shows (when continuing)
+    /// or whatever "On startup" in Settings says.
     pub fn open_initial_tabs(&mut self, input: Option<&str>) -> wry::Result<()> {
         let from_command_line =
             input.and_then(|text| url_input::resolve(text, self.settings.search_engine.search_prefix()));
+        let continuing = self.settings.startup == Startup::Continue || self.restored_after_crash;
+
+        // Restored tabs load only when they're first opened.
+        let session = self.session_path.as_deref().map(Session::load).unwrap_or_default();
+        let mut active = None;
+        for (index, url) in session.tabs.iter().enumerate() {
+            let pinned = index < session.pinned;
+            if !pinned && !continuing {
+                break; // the pinned tabs are the first ones
+            }
+            let title = session.titles.get(index).cloned().unwrap_or_default();
+            let id = self.push_lazy_tab(url, title, Placement::End, false);
+            if let Some(tab) = self.tab_mut(id) {
+                tab.pinned = pinned;
+            }
+            if index == session.active {
+                active = Some(id);
+            }
+        }
+
         if let Some(url) = from_command_line {
             return self.open_tab(&url, true, Placement::End, false).map(|_| ());
         }
-
-        if self.settings.startup == Startup::Continue || self.restored_after_crash {
-            let session = self.session_path.as_deref().map(Session::load).unwrap_or_default();
-            if !session.tabs.is_empty() {
-                let mut active = None;
-                for (index, url) in session.tabs.iter().enumerate() {
-                    let title = session.titles.get(index).cloned().unwrap_or_default();
-                    let id = self.push_lazy_tab(url, title, Placement::End, false);
-                    if index == session.active {
-                        active = Some(id);
-                    }
-                }
-                if let Some(first) = self.tabs.first().map(|t| t.id) {
-                    self.select_tab(active.unwrap_or(first));
-                    return Ok(());
-                }
+        if continuing {
+            if let Some(first) = self.tabs.first().map(|t| t.id) {
+                self.select_tab(active.unwrap_or(first));
+                return Ok(());
             }
         }
 
@@ -715,6 +752,45 @@ impl Browser {
         if maximized != self.maximized {
             self.maximized = maximized;
             self.sync();
+        }
+    }
+
+    /// Call when the window moved or changed size: remembers its normal place
+    /// (not maximized, minimized or full screen) for next time. Saved to disk
+    /// every few seconds and when the browser closes.
+    pub fn track_window_state(&mut self) {
+        if self.is_fullscreen() || self.window.is_minimized() {
+            return;
+        }
+        let size = self.window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+        let maximized = self.window.is_maximized();
+        let Some(mut state) = self.window_state.or_else(|| {
+            let pos = self.window.outer_position().ok()?;
+            Some(WindowState { x: pos.x, y: pos.y, width: size.width, height: size.height, maximized })
+        }) else {
+            return;
+        };
+        state.maximized = maximized;
+        if !maximized {
+            if let Ok(pos) = self.window.outer_position() {
+                (state.x, state.y, state.width, state.height) = (pos.x, pos.y, size.width, size.height);
+            }
+        }
+        self.window_state = Some(state);
+    }
+
+    /// Writes the window's place to `window.json` if it changed.
+    pub fn save_window_state(&mut self) {
+        let (Some(path), Some(state)) = (&self.window_state_path, self.window_state) else { return };
+        if self.saved_window_state == Some(state) {
+            return;
+        }
+        match state.save(path) {
+            Ok(()) => self.saved_window_state = Some(state),
+            Err(e) => eprintln!("save window place to {}: {e}", path.display()),
         }
     }
 
@@ -991,6 +1067,7 @@ impl Browser {
             UserEvent::Tick => {
                 self.manage_memory();
                 self.update_memory_button(false);
+                self.save_window_state();
                 self.check_for_updates_if_due();
                 self.menu.release_if_idle();
                 #[cfg(debug_assertions)]
@@ -1140,6 +1217,8 @@ impl Browser {
             UiMsg::ResetSiteZoom => self.reset_site_zoom(),
             UiMsg::ImportFrom { source } => self.import_from(source),
             UiMsg::InstallUpdate => self.install_update(),
+            UiMsg::ImportBookmarksFile => self.import_bookmarks_file(),
+            UiMsg::ExportBookmarks => self.export_bookmarks(),
             UiMsg::CloseTab { id } => self.close_tab(id),
             UiMsg::SelectTab { id, focus } => self.select_tab_with_focus(id, focus),
             UiMsg::ReorderTab { id, to_index } => self.reorder_tab(id, to_index),
@@ -1274,6 +1353,8 @@ impl Browser {
             Shortcut::SearchTabs => self.run_command(BrowserCommand::SearchTabs),
             Shortcut::Screenshot => self.run_command(BrowserCommand::Screenshot),
             Shortcut::SavePage => self.run_command(BrowserCommand::SavePage),
+            Shortcut::ViewSource => self.run_command(BrowserCommand::ViewSource),
+            Shortcut::ClearBrowsingData => self.run_command(BrowserCommand::ClearBrowsingData),
             Shortcut::Menu => {
                 if self.is_fullscreen() {
                     self.exit_fullscreen();
@@ -1342,6 +1423,8 @@ impl Browser {
             C::SearchTabs => self.show_tab_search(),
             C::Screenshot => self.take_screenshot(),
             C::ImportData => self.import_from_other_browsers(),
+            C::ViewSource => self.view_source(),
+            C::ClearBrowsingData => self.show_settings_section("privacy"),
             C::Exit => self.request_close(),
             // These act on the page, or filter when viewing Downloads / Bookmarks / History.
             C::Find if matches!(self.panel, Some(Panel::Bookmarks | Panel::History)) => {
@@ -1475,6 +1558,13 @@ impl Browser {
             ),
             MenuEntry::item(C::Print, "Print…", "Ctrl+P", "print", has_page && has_view),
             MenuEntry::item(C::SavePage, "Save page as…", "Ctrl+S", "save", has_page && has_view),
+            MenuEntry::item(
+                C::ViewSource,
+                "View page source",
+                "Ctrl+U",
+                "source",
+                self.active_tab().is_some_and(|t| can_view_source(&t.url)),
+            ),
             MenuEntry::item(C::DevTools, "Developer tools", "F12", "devtools", has_view),
             MenuEntry::Sep,
             MenuEntry::item(C::ImportData, "Import from Chrome or Edge…", "", "import", true),
@@ -1509,7 +1599,6 @@ impl Browser {
         let muted = tab.muted;
         let is_dl = is_downloads_url(&tab.url);
         let has_view = tab.webview.is_some();
-        let count = self.tabs.len();
         let in_split = self.split_active_pair().is_some_and(|(l, r)| l == id || r == id);
         let can_pair = self.active.is_some_and(|a| {
             a != id
@@ -1517,7 +1606,17 @@ impl Browser {
                 && self.tab(a).is_some_and(|t| !is_downloads_url(&t.url))
         });
 
-        let mut entries = vec![MenuEntry::tab_item(T::NewTabToTheRight, "New tab to the right", "", "newTab", true)];
+        let pinned = tab.pinned;
+        let mut entries = vec![
+            MenuEntry::tab_item(T::NewTabToTheRight, "New tab to the right", "", "newTab", true),
+            MenuEntry::tab_item(
+                T::TogglePin,
+                if pinned { "Unpin tab" } else { "Pin tab" },
+                "",
+                if pinned { "unpin" } else { "pin" },
+                true,
+            ),
+        ];
         if in_split {
             entries.push(MenuEntry::tab_item(T::SwapSplitView, "Swap split panes", "", "swap", true));
             entries.push(MenuEntry::tab_item(T::CloseSplitView, "Close split view", "", "split", true));
@@ -1537,8 +1636,20 @@ impl Browser {
             ),
             MenuEntry::Sep,
             MenuEntry::tab_item(T::Close, "Close", "Ctrl+W", "close", true),
-            MenuEntry::tab_item(T::CloseOthers, "Close other tabs", "", "", count > 1),
-            MenuEntry::tab_item(T::CloseToTheRight, "Close tabs to the right", "", "", index + 1 < count),
+            MenuEntry::tab_item(
+                T::CloseOthers,
+                "Close other tabs",
+                "",
+                "",
+                self.tabs.iter().any(|t| t.id != id && !t.pinned),
+            ),
+            MenuEntry::tab_item(
+                T::CloseToTheRight,
+                "Close tabs to the right",
+                "",
+                "",
+                self.tabs.iter().skip(index + 1).any(|t| !t.pinned),
+            ),
             MenuEntry::Sep,
             MenuEntry::tab_item(
                 T::ReopenClosed,
@@ -1560,6 +1671,7 @@ impl Browser {
                 self.open_tab_logged(&url, Placement::AfterTab(id), false);
                 self.focus_address();
             }
+            T::TogglePin => self.toggle_pin(id),
             T::SplitWithActive => self.split_tab_with_active(id),
             T::SwapSplitView => self.swap_split_view(),
             T::CloseSplitView => self.close_split_view(),
@@ -1582,15 +1694,16 @@ impl Browser {
             }
             T::ToggleMute => self.toggle_mute(id),
             T::Close => self.close_tab(id),
+            // Pinned tabs stay, like in Chrome: they are closed one by one.
             T::CloseOthers => {
-                let others: Vec<TabId> = self.tabs.iter().map(|t| t.id).filter(|&t| t != id).collect();
+                let others: Vec<TabId> = self.tabs.iter().filter(|t| t.id != id && !t.pinned).map(|t| t.id).collect();
                 self.select_tab(id);
                 for other in others {
                     self.close_tab(other);
                 }
             }
             T::CloseToTheRight => {
-                let right: Vec<TabId> = self.tabs.iter().skip(index + 1).map(|t| t.id).collect();
+                let right: Vec<TabId> = self.tabs.iter().skip(index + 1).filter(|t| !t.pinned).map(|t| t.id).collect();
                 if self.active.is_some_and(|a| right.contains(&a)) {
                     self.select_tab(id);
                 }
@@ -2107,14 +2220,33 @@ impl Browser {
 
     /// The menu's "Import from Chrome or Edge…": opens Settings at Import.
     fn import_from_other_browsers(&mut self) {
+        self.show_settings_section("import");
+    }
+
+    /// Opens Settings and scrolls to one of its sections (`settings-<name>`
+    /// in `ui/index.html`).
+    fn show_settings_section(&mut self, name: &'static str) {
+        if self.is_fullscreen() {
+            self.exit_fullscreen();
+        }
         if self.panel != Some(Panel::Settings) {
             self.set_panel(Some(Panel::Settings));
         }
         self.flush_sync();
         log_err(
-            self.chrome.evaluate_script("window.browser && window.browser.showSettingsSection('import')"),
-            "show import settings",
+            self.chrome.evaluate_script(&format!("window.browser && window.browser.showSettingsSection('{name}')")),
+            "show settings section",
         );
+    }
+
+    /// Ctrl+U: opens the source of the active page in a new tab next to it.
+    fn view_source(&mut self) {
+        let Some(tab) = self.active_tab() else { return };
+        if !can_view_source(&tab.url) {
+            return;
+        }
+        let (url, private, id) = (format!("view-source:{}", tab.url), tab.private, tab.id);
+        self.open_tab_logged(&url, Placement::AfterTab(id), private);
     }
 
     /// Reads `source`'s bookmarks and history in the background.
@@ -2159,6 +2291,79 @@ impl Browser {
             )
         };
         self.show_notice(&text, false);
+    }
+
+    /// Asks for a bookmarks file (the .html file every browser exports) and
+    /// adds the bookmarks in it that aren't here yet.
+    fn import_bookmarks_file(&mut self) {
+        /// A bookmarks file this big is something else.
+        const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
+        self.flush_sync();
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Import bookmarks from a file")
+            .add_filter("Bookmarks file", &["html", "htm"])
+            .set_parent(&self.window)
+            .pick_file()
+        else {
+            return;
+        };
+        let text = match std::fs::metadata(&path) {
+            Ok(meta) if meta.len() > MAX_FILE_SIZE => Err("the file is too big to be a bookmarks file".to_string()),
+            _ => std::fs::read(&path)
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .map_err(|e| e.to_string()),
+        };
+        let found = match text {
+            Ok(text) => bookmark_file::parse_html(&text),
+            Err(e) => {
+                self.show_notice(&format!("Couldn't read that file: {e}"), true);
+                return;
+            }
+        };
+        if found.is_empty() {
+            self.show_notice("No bookmarks found in that file", true);
+            return;
+        }
+        let added = self.bookmarks.import(found);
+        if added > 0 {
+            self.bookmarks_rev += 1;
+            self.save_bookmarks();
+            self.sync();
+        }
+        let text = match added {
+            0 => "Nothing new to import: you already have those bookmarks".to_string(),
+            1 => "Imported 1 bookmark".to_string(),
+            n => format!("Imported {n} bookmarks"),
+        };
+        self.show_notice(&text, false);
+    }
+
+    /// Saves every bookmark as a bookmarks file that Chrome, Edge, Firefox
+    /// and Safari can import.
+    fn export_bookmarks(&mut self) {
+        let count = self.bookmarks.items().len();
+        if count == 0 {
+            self.show_notice("There are no bookmarks to export yet", false);
+            return;
+        }
+        self.flush_sync();
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Export bookmarks")
+            .set_file_name(format!("Rust Browser bookmarks {}.html", &local_timestamp()[..10]))
+            .add_filter("Bookmarks file", &["html"])
+            .set_parent(&self.window);
+        if let Some(folder) = self.settings.download_dir.clone().filter(|d| d.is_dir()).or_else(downloads_folder) {
+            dialog = dialog.set_directory(folder);
+        }
+        let Some(path) = dialog.save_file() else { return };
+        match std::fs::write(&path, bookmark_file::to_html(self.bookmarks.items())) {
+            Ok(()) => {
+                let text =
+                    if count == 1 { "Exported 1 bookmark".to_string() } else { format!("Exported {count} bookmarks") };
+                self.show_notice_with_action(&text, "Show", NoticeAction::ShowFile(path));
+            }
+            Err(e) => self.show_notice(&format!("Couldn't save the bookmarks file: {e}"), true),
+        }
     }
 
     // ---- updates --------------------------------------------------------
@@ -2238,6 +2443,7 @@ impl Browser {
                 self.update = UpdateStatus::Installing;
                 self.flush_sync();
                 self.save_session();
+                self.save_window_state();
                 match updater::run_installer(&installer) {
                     // The installer updates the files once this window is gone,
                     // then starts the browser again with the same tabs.
@@ -2361,6 +2567,7 @@ impl Browser {
         }
         self.restarting = true;
         self.save_session();
+        self.save_window_state();
 
         // If the engine already crashed right after the last restart, don't
         // loop: tell the user instead.
@@ -3047,6 +3254,7 @@ impl Browser {
             can_go_forward: false,
             zoom_percent: self.settings.zoom_percent,
             private,
+            pinned: false,
             audible: false,
             muted: false,
             hidden_since: Cell::new(None),
@@ -3061,6 +3269,8 @@ impl Browser {
                 self.tabs.iter().position(|t| t.id == other).map_or(self.tabs.len(), |i| i + 1)
             }
         };
+        // New tabs are never pinned, so they go after the pinned ones.
+        let index = index.max(self.pinned_count());
         self.tabs.insert(index, tab);
         id
     }
@@ -3316,7 +3526,8 @@ impl Browser {
 
     fn reorder_tab(&mut self, id: TabId, to_index: usize) {
         let Some(from) = self.tabs.iter().position(|t| t.id == id) else { return };
-        let target = to_index.min(self.tabs.len().saturating_sub(1));
+        // Pinned tabs move among the pinned ones, the others after them.
+        let target = reorder_target(to_index, self.tabs.len(), self.pinned_count(), self.tabs[from].pinned);
         if from == target {
             return;
         }
@@ -3504,6 +3715,7 @@ impl Browser {
                     can_go_forward: t.can_go_forward,
                     zoom_percent: t.zoom_percent,
                     private: t.private,
+                    pinned: t.pinned,
                     audible: t.audible,
                     muted: t.muted,
                     sleeping: t.webview.is_none() && !is_downloads_url(&t.url),
@@ -3574,7 +3786,12 @@ impl Browser {
                 }
                 count += 1;
             }
-            if same && prev.tabs.len() == count && prev.titles.len() == count && prev.active == active_idx.unwrap_or(0)
+            let pinned = self.tabs.iter().filter(|t| !t.private && t.pinned).count();
+            if same
+                && prev.tabs.len() == count
+                && prev.titles.len() == count
+                && prev.active == active_idx.unwrap_or(0)
+                && prev.pinned == pinned
             {
                 return;
             }
@@ -3585,6 +3802,8 @@ impl Browser {
             tabs: kept.iter().map(|t| t.url.clone()).collect(),
             titles: kept.iter().map(|t| t.title.clone()).collect(),
             active: kept.iter().position(|t| Some(t.id) == self.active).unwrap_or(0),
+            // Pinned tabs come first, so they are the leading saved tabs too.
+            pinned: kept.iter().take_while(|t| t.pinned).count(),
         };
         let mut saved = self.saved_session.borrow_mut();
         if saved.as_ref() != Some(&session) {
@@ -3613,6 +3832,33 @@ impl Browser {
 
     fn active_index(&self) -> Option<usize> {
         self.active.and_then(|id| self.tabs.iter().position(|t| t.id == id))
+    }
+
+    /// How many tabs are pinned (they are the first ones).
+    fn pinned_count(&self) -> usize {
+        self.tabs.iter().take_while(|t| t.pinned).count()
+    }
+
+    /// Pins tab `id` (it moves to the end of the pinned tabs) or unpins it
+    /// (it moves to just after them).
+    fn toggle_pin(&mut self, id: TabId) {
+        let Some(from) = self.tabs.iter().position(|t| t.id == id) else { return };
+        let mut tab = self.tabs.remove(from);
+        tab.pinned = !tab.pinned;
+        let to = self.pinned_count();
+        self.tabs.insert(to, tab);
+        self.sync();
+    }
+}
+
+/// Where a dragged tab may land: pinned tabs stay among the first
+/// `pinned` tabs, the others stay after them.
+fn reorder_target(to_index: usize, len: usize, pinned: usize, is_pinned: bool) -> usize {
+    let last = len.saturating_sub(1);
+    if is_pinned {
+        to_index.min(pinned.saturating_sub(1)).min(last)
+    } else {
+        to_index.clamp(pinned.min(last), last)
     }
 }
 
@@ -3662,6 +3908,13 @@ fn site_label(url: &str) -> String {
         }
         None => url.to_string(),
     }
+}
+
+/// A page whose HTML source can be shown: a web page or a local file (not
+/// the browser's own pages, and not a source view already).
+fn can_view_source(url: &str) -> bool {
+    let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
+    is_web_page(url) || lower.starts_with("file:")
 }
 
 fn is_web_url(url: &str) -> bool {
@@ -3896,6 +4149,32 @@ mod tests {
         assert_eq!(site_label("file:///C:/notes.html"), "Local file");
         assert_eq!(site_label("view-source:https://example.com/a"), "example.com");
         assert_eq!(site_label("about:blank"), "about:blank");
+    }
+
+    #[test]
+    fn view_source_is_only_for_pages_and_files() {
+        assert!(can_view_source("https://example.com/"));
+        assert!(can_view_source("HTTP://example.com/"));
+        assert!(can_view_source("file:///C:/notes.html"));
+        assert!(!can_view_source("view-source:https://example.com/"));
+        assert!(!can_view_source(NEW_TAB_URL));
+        assert!(!can_view_source(DOWNLOADS_URL));
+        assert!(!can_view_source(""));
+    }
+
+    #[test]
+    fn dragged_tabs_stay_on_their_side_of_the_pinned_tabs() {
+        // Five tabs, the first two pinned.
+        assert_eq!(reorder_target(4, 5, 2, true), 1, "a pinned tab can't go past the pinned ones");
+        assert_eq!(reorder_target(0, 5, 2, true), 0);
+        assert_eq!(reorder_target(0, 5, 2, false), 2, "other tabs can't go in among the pinned ones");
+        assert_eq!(reorder_target(3, 5, 2, false), 3);
+        assert_eq!(reorder_target(99, 5, 2, false), 4);
+        // No pinned tabs: anywhere.
+        assert_eq!(reorder_target(0, 5, 0, false), 0);
+        assert_eq!(reorder_target(9, 5, 0, false), 4);
+        // Every tab pinned.
+        assert_eq!(reorder_target(9, 3, 3, true), 2);
     }
 
     #[test]

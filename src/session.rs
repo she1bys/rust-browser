@@ -20,6 +20,13 @@ pub struct Session {
     pub titles: Vec<String>,
     /// Index into `tabs` of the tab that was showing.
     pub active: usize,
+    /// How many of the first `tabs` are pinned (pinned tabs always come first).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub pinned: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 impl Session {
@@ -39,6 +46,7 @@ impl Session {
         let mut tabs = Vec::new();
         let mut titles = Vec::new();
         let mut active = 0;
+        let mut pinned = 0;
         let has_titles = !self.titles.is_empty();
         for (index, url) in self.tabs.into_iter().enumerate() {
             if tabs.len() == MAX_TABS {
@@ -48,13 +56,17 @@ impl Session {
                 if index == self.active {
                     active = tabs.len();
                 }
+                // Dropped tabs don't count, so pinned tabs stay exactly the leading ones.
+                if index < self.pinned {
+                    pinned += 1;
+                }
                 tabs.push(url);
                 if has_titles {
                     titles.push(self.titles.get(index).cloned().unwrap_or_default());
                 }
             }
         }
-        Session { tabs, titles, active }
+        Session { tabs, titles, active, pinned }
     }
 }
 
@@ -76,7 +88,7 @@ mod tests {
     use super::*;
 
     fn session(tabs: &[&str], active: usize) -> Session {
-        Session { tabs: tabs.iter().map(|s| s.to_string()).collect(), titles: Vec::new(), active }
+        Session { tabs: tabs.iter().map(|s| s.to_string()).collect(), titles: Vec::new(), active, pinned: 0 }
     }
 
     #[test]
@@ -111,7 +123,7 @@ mod tests {
     #[test]
     fn caps_the_number_of_tabs() {
         let many: Vec<String> = (0..MAX_TABS + 25).map(|i| format!("https://example.com/{i}")).collect();
-        let cleaned = Session { tabs: many, titles: Vec::new(), active: MAX_TABS + 10 }.sanitized();
+        let cleaned = Session { tabs: many, titles: Vec::new(), active: MAX_TABS + 10, pinned: 0 }.sanitized();
         assert_eq!(cleaned.tabs.len(), MAX_TABS);
         assert_eq!(cleaned.active, 0);
     }
@@ -126,10 +138,40 @@ mod tests {
             ],
             titles: vec!["Source".into(), "Bad".into(), "Rust".into()],
             active: 2,
+            pinned: 0,
         };
         let cleaned = saved.sanitized();
         assert_eq!(cleaned.tabs, vec!["view-source:https://example.com", "https://rust-lang.org/"]);
         assert_eq!(cleaned.titles, vec!["Source", "Rust"]);
         assert_eq!(cleaned.active, 1);
+    }
+
+    #[test]
+    fn keeps_pinned_tabs_leading_after_dropping_bad_ones() {
+        let saved = Session {
+            tabs: vec![
+                "https://mail.example/".into(),
+                "javascript:alert(1)".into(),
+                "https://chat.example/".into(),
+                "https://news.example/".into(),
+            ],
+            titles: Vec::new(),
+            active: 3,
+            pinned: 3,
+        };
+        let cleaned = saved.sanitized();
+        assert_eq!(cleaned.tabs.len(), 3);
+        assert_eq!(cleaned.pinned, 2);
+        assert_eq!(cleaned.active, 2);
+
+        // A count bigger than the list (an edited file) is cut down to it.
+        let cleaned = Session { pinned: 99, ..session(&["https://a.example/"], 0) }.sanitized();
+        assert_eq!(cleaned.pinned, 1);
+
+        // Files from before pinned tabs existed have none.
+        let old: Session = serde_json::from_str(r#"{"tabs":["https://a.example/"],"active":0}"#).unwrap();
+        assert_eq!(old.pinned, 0);
+        // And sessions without pinned tabs don't write the field.
+        assert!(!serde_json::to_string(&session(&["https://a.example/"], 0)).unwrap().contains("pinned"));
     }
 }
