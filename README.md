@@ -203,6 +203,8 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+Copies people already installed (0.1.1 and later) update themselves from the newest release using the updater they shipped with, so a release must keep working for them: a normal (not draft or pre-release) release with `RustBrowser-Setup-<version>.exe` and `SHA256SUMS.txt`, from an installer with the same AppId that accepts their command line. The test `releases_stay_installable_by_older_versions` in `src/updater.rs` fails if the release workflow or installer stops doing that.
+
 Every push and pull request is checked by [ci.yml](.github/workflows/ci.yml) (formatting, Clippy, tests, release build).
 
 ## Contributing

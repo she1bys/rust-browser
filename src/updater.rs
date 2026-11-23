@@ -611,6 +611,71 @@ mod tests {
         }
     }
 
+    /// Copies of the browser that are already installed decide by
+    /// themselves how to update, with the updater code they shipped with
+    /// (0.1.1 and later). A release they can't read or an installer they
+    /// can't drive can never be fixed for them, so these must not change:
+    /// - the release is a normal (not draft or pre-release) GitHub release,
+    ///   tagged `v<version>`, found by `LATEST_RELEASE_API`;
+    /// - it has `RustBrowser-Setup-<version>.exe` and `SHA256SUMS.txt`;
+    /// - the installer has the same AppId (so it updates rather than
+    ///   installs a second copy), the same .exe name, leaves `unins000.exe`
+    ///   next to it (see `can_update_itself`), and takes the arguments of
+    ///   `run_installer`, reopening the browser on `/RELAUNCH`.
+    #[test]
+    fn releases_stay_installable_by_older_versions() {
+        const WORKFLOW: &str = include_str!("../.github/workflows/release.yml");
+        const INSTALLER: &str = include_str!("../installer/rust-browser.iss");
+
+        assert_eq!(LATEST_RELEASE_API, "https://api.github.com/repos/she1bys/rust-browser/releases/latest");
+        assert_eq!(CHECKSUMS_ASSET, "SHA256SUMS.txt");
+
+        // The release workflow: triggered by v-tags, publishes the installer
+        // under the name older versions look for, plus the checksum list.
+        assert!(WORKFLOW.contains(r#"tags: ["v*"]"#));
+        assert!(WORKFLOW.contains(r#"Copy-Item "target\installer\RustBrowser-Setup-$env:VERSION.exe" dist\"#));
+        assert!(WORKFLOW.contains(r#"dist\SHA256SUMS.txt"#));
+        assert!(WORKFLOW.contains("gh release create"));
+        for flag in ["--draft", "--prerelease", "--latest=false"] {
+            assert!(!WORKFLOW.contains(flag), "older versions only see the latest finished release ({flag})");
+        }
+
+        // The installer.
+        for line in [
+            "AppId={{6F0D8B1E-6C2B-4C1C-9B7A-2E5D4A9C8F31}",
+            r#"#define AppExeName "rust-browser.exe""#,
+            "OutputBaseFilename=RustBrowser-Setup-{#AppVersion}",
+            "PrivilegesRequiredOverridesAllowed=dialog",
+            "CloseApplications=yes",
+            "if CompareText(ParamStr(I), '/RELAUNCH') = 0 then",
+            r#"Parameters: "--restore-session"; Flags: nowait runasoriginaluser; Check: RelaunchRequested"#,
+        ] {
+            assert!(INSTALLER.contains(line), "installer script no longer has: {line}");
+        }
+        assert!(!INSTALLER.contains("Uninstallable=no"), "unins000.exe marks a copy that can update itself");
+        assert_eq!(crate::RESTORE_ARG, "--restore-session");
+
+        // What older versions pick from a release made by this workflow.
+        let version = Version::current();
+        let release = parse_release(
+            release_json(
+                &format!("v{version}"),
+                &[
+                    &format!("RustBrowser-Setup-{version}.exe"),
+                    "RustBrowser-Setup.exe",
+                    &format!("rust-browser-{version}-portable.exe"),
+                    &format!("rust-browser-{version}-arm64-portable.exe"),
+                    "SHA256SUMS.txt",
+                ],
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(release.version, version);
+        assert_eq!(release.installer_name, format!("RustBrowser-Setup-{version}.exe"));
+        assert!(release.checksums_url.is_some());
+    }
+
     #[test]
     fn feed_override_must_be_local() {
         // Not set in tests: the real GitHub API.
