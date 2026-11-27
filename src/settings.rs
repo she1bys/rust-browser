@@ -169,6 +169,9 @@ pub struct Settings {
     pub home_page: String,
     pub show_home_button: bool,
     pub show_bookmarks_bar: bool,
+    /// Apple-style Liquid Glass for the browser's own pages (see `ui/glass.js`).
+    /// Efficiency mode turns it off whatever this says.
+    pub liquid_glass: bool,
     /// One of [`ZOOM_LEVELS`].
     pub zoom_percent: u16,
     /// `None` uses the Windows Downloads folder.
@@ -208,6 +211,7 @@ impl Default for Settings {
             home_page: String::new(),
             show_home_button: false,
             show_bookmarks_bar: false,
+            liquid_glass: true,
             zoom_percent: 100,
             download_dir: None,
             block_popups: true,
@@ -237,6 +241,7 @@ pub struct SettingsPatch {
     pub home_page: Option<String>,
     pub show_home_button: Option<bool>,
     pub show_bookmarks_bar: Option<bool>,
+    pub liquid_glass: Option<bool>,
     pub zoom_percent: Option<u16>,
     pub block_popups: Option<bool>,
     pub memory_saver: Option<MemorySaver>,
@@ -316,6 +321,9 @@ impl Settings {
         }
         if let Some(show) = patch.show_bookmarks_bar {
             self.show_bookmarks_bar = show;
+        }
+        if let Some(on) = patch.liquid_glass {
+            self.liquid_glass = on;
         }
         if let Some(zoom) = patch.zoom_percent {
             if ZOOM_LEVELS.contains(&zoom) {
@@ -432,6 +440,11 @@ mod tests {
         assert!(off.apply(patch));
         assert_eq!(off.efficiency_mode, EfficiencyMode::On);
         assert!(serde_json::from_str::<SettingsPatch>(r#"{"efficiencyMode":"turbo"}"#).is_err());
+        // Liquid Glass is on for older files too, and can be switched off.
+        assert!(s.liquid_glass);
+        let patch: SettingsPatch = serde_json::from_str(r#"{"liquidGlass":false}"#).unwrap();
+        assert!(off.apply(patch));
+        assert!(!off.liquid_glass);
         let mut s = s;
         assert!(s.apply(SettingsPatch { safe_browsing: Some(false), ..Default::default() }));
         assert!(!s.safe_browsing);
@@ -537,6 +550,7 @@ mod tests {
             home_page: "https://example.com/".into(),
             show_home_button: true,
             show_bookmarks_bar: true,
+            liquid_glass: false,
             zoom_percent: 125,
             download_dir: Some(PathBuf::from(r"D:\Files")),
             block_popups: false,

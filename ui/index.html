@@ -1159,7 +1159,74 @@
   body:not(.full) #toast:not(:has(#toast-action:not([hidden]))) { padding-right: 14px; }
   body:not(.full) #toast.show { transform: translateY(0); }
   #toast.error { background: var(--danger); color: var(--on-accent); }
+  /* ---- Liquid Glass (Settings > Appearance; see glass.js and glass.css) ----
+     The bars are see-through, so the controls float on the backdrop as glass:
+     the navigation buttons, the address bar and the tools, each a capsule. */
+  .tb-group { display: contents; }
+  html.liquid #tabstrip,
+  html.liquid #toolbar,
+  html.liquid #bookmarks-bar { background: transparent; }
+  html.liquid #toolbar { gap: 8px; padding: 0 8px; border-bottom-color: var(--lg-line); }
+  html.liquid body.bookmarks-bar #toolbar { border-bottom-color: transparent; }
+  html.liquid #bookmarks-bar { border-bottom-color: var(--lg-line); }
+  html.liquid .tb-group { display: flex; align-items: center; gap: 1px; height: 38px; padding: 0 4px; border-radius: 19px; }
+  html.liquid .tb-group .icon-btn { border-radius: 15px; }
+  html.liquid .tb-group .icon-btn:hover,
+  html.liquid .bm-chip:hover,
+  html.liquid #caption button:hover:not(#win-close) { background: var(--lg-hover); }
+  html.liquid #address-wrap { margin: 0; }
+  html.liquid #address-wrap:hover:not(:focus-within) { --lg-face: var(--lg-hover); }
+  html.liquid #address-wrap:focus-within { --lg-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+  /* The tab you're on is a glass capsule; the others sit on the backdrop. */
+  html.liquid .tab:hover { background: var(--lg-hover); }
+  html.liquid .tab.active { height: 30px; margin-bottom: 4px; border-radius: 13px; }
+  html.liquid .tab.private:not(.active) { background: color-mix(in srgb, var(--private) 14%, transparent); }
+  html.liquid .tab.private.active { --lg-face: color-mix(in srgb, var(--private) 16%, transparent); }
+  html.liquid .tab.split-left.active,
+  html.liquid .tab.split-right.active { --lg-ring: inset 0 2.5px 0 var(--accent); }
+  html.liquid .tab.pinned.audible .audio,
+  html.liquid .tab.pinned.muted .audio { background: var(--lg-control-hover); }
+
+  /* Panels: the backdrop shows through, the cards are glass, and the header
+     is a glass bar the list scrolls under. */
+  html.liquid .panel,
+  html.liquid .tab-page { background: transparent; }
+  html.liquid .panel-head {
+    position: sticky;
+    top: 8px;
+    z-index: 5;
+    min-height: 52px;
+    margin: 0 -12px 22px;
+    padding: 7px 8px 7px 20px;
+    border-radius: 26px;
+  }
+  html.liquid .card { border-radius: 22px; }
+  html.liquid .row + .row,
+  html.liquid .option + .option,
+  html.liquid .entry-row + .entry-row,
+  html.liquid .dl + .dl { border-top-color: var(--lg-line); }
+  html.liquid .entry-link:hover,
+  html.liquid .option:hover { background: var(--lg-hover); }
+  html.liquid .btn,
+  html.liquid .select,
+  html.liquid .text { border-color: transparent; background: var(--lg-control); box-shadow: var(--lg-control-rim); }
+  html.liquid .btn { border-radius: 15px; }
+  html.liquid .select, html.liquid .text { border-radius: 10px; }
+  html.liquid .panel-search { border-radius: 16px; }
+  html.liquid .btn:hover { background: var(--lg-control-hover); }
+  html.liquid .text:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent), var(--lg-control-rim); }
+  html.liquid .seg { border-radius: 11px; background: var(--lg-line); }
+  html.liquid .seg span { border-radius: 9px; }
+  html.liquid .seg input:checked + span { background: var(--lg-control-hover); box-shadow: var(--lg-control-rim); }
+  html.liquid .switch::after { box-shadow: 0 1px 3px rgb(0 0 0 / 0.25), inset 0 1px 0 rgb(255 255 255 / 0.9); }
+
+  /* Messages and the close prompt are glass too. */
+  html.liquid #toast { color: var(--text); --lg-face: color-mix(in srgb, var(--surface) 30%, transparent); }
+  html.liquid body.full #toast { border-radius: 22px; padding: 12px 18px; }
+  html.liquid .modal-card { border-radius: 26px; }
 </style>
+<!--liquid-glass-->
 </head>
 <body>
   <div id="tabstrip">
@@ -1187,6 +1254,7 @@
   <div id="resize-top"><div id="resize-nw"></div><div id="resize-ne"></div></div>
 
   <div id="toolbar">
+    <div class="tb-group" data-glass>
     <button id="back" class="icon-btn" title="Back (Alt+Left)" aria-label="Back" disabled>
       <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
     </button>
@@ -1200,7 +1268,8 @@
     <button id="home" class="icon-btn" title="Home (Alt+Home)" aria-label="Home" hidden>
       <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10"/></svg>
     </button>
-    <div id="address-wrap">
+    </div>
+    <div id="address-wrap" data-glass>
       <span id="private-badge" hidden>Private</span>
       <span id="security" class="sec" aria-hidden="true">
         <svg class="sec-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>
@@ -1228,6 +1297,7 @@
         <svg viewBox="0 0 24 24"><path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8l-5.8 3.1 1.1-6.5L2.6 9.8l6.5-.9z"/></svg>
       </button>
     </div>
+    <div class="tb-group" data-glass>
     <button id="split-swap" class="icon-btn" title="Swap split panes" aria-label="Swap split panes" hidden>
       <svg viewBox="0 0 24 24"><path d="M4 9h16m0 0-3-3m3 3-3 3M20 15H4m0 0 3-3m-3 3 3 3"/></svg>
     </button>
@@ -1256,6 +1326,7 @@
     <button id="menu-btn" class="icon-btn" title="Menu (Alt+F)" aria-label="Menu">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="18.5" r="1.3"/></svg>
     </button>
+    </div>
   </div>
   <div id="bookmarks-bar" hidden>
     <div id="bookmarks-bar-list"></div>
@@ -1266,14 +1337,14 @@
 
   <div id="settings" class="panel" hidden>
     <div class="panel-inner">
-      <div class="panel-head">
+      <div class="panel-head" data-glass>
         <h1>Settings</h1>
         <button class="btn panel-done">Done</button>
       </div>
 
       <section>
         <h2>Appearance</h2>
-        <div class="card">
+        <div class="card" data-glass>
           <div class="row">
             <div class="row-text">
               <div>Theme</div>
@@ -1309,17 +1380,24 @@
             </div>
             <button id="set-bookmarks-bar" class="switch" role="switch" data-setting="showBookmarksBar" aria-checked="false" aria-label="Show bookmarks bar"></button>
           </div>
+          <div class="row">
+            <div class="row-text">
+              <div>Liquid Glass</div>
+              <div id="liquid-glass-hint" class="row-hint">Apple-style glass for the tab strip, toolbar, panels and the New Tab page: it bends and frosts what is behind it, and lights its edges.</div>
+            </div>
+            <button id="set-liquid-glass" class="switch" role="switch" data-setting="liquidGlass" aria-checked="true" aria-label="Liquid Glass"></button>
+          </div>
         </div>
       </section>
 
       <section>
         <h2>On startup</h2>
-        <div id="set-startup" class="card" role="radiogroup" aria-label="On startup"></div>
+        <div id="set-startup" class="card" data-glass role="radiogroup" aria-label="On startup"></div>
       </section>
 
       <section>
         <h2>Home page and new tabs</h2>
-        <div class="card">
+        <div class="card" data-glass>
           <div class="row">
             <div class="row-text">
               <div>Home page</div>
@@ -1338,12 +1416,12 @@
       <section>
         <h2>Search engine</h2>
         <p class="hint">Used when you type words instead of a web address.</p>
-        <div id="set-engine" class="card" role="radiogroup" aria-label="Search engine"></div>
+        <div id="set-engine" class="card" data-glass role="radiogroup" aria-label="Search engine"></div>
       </section>
 
       <section>
         <h2>Downloads</h2>
-        <div class="card">
+        <div class="card" data-glass>
           <div class="row">
             <div class="row-text">
               <div>Save files to</div>
@@ -1357,7 +1435,7 @@
 
       <section>
         <h2>Performance</h2>
-        <div class="card">
+        <div class="card" data-glass>
           <div class="row">
             <div class="row-text">
               <div>Memory saver</div>
@@ -1378,7 +1456,7 @@
 
       <section id="settings-privacy">
         <h2>Privacy</h2>
-        <div class="card">
+        <div class="card" data-glass>
           <div class="row">
             <div class="row-text">
               <div>Clear browsing data</div>
@@ -1441,7 +1519,7 @@
 
       <section id="settings-import">
         <h2>Import</h2>
-        <div class="card">
+        <div class="card" data-glass>
           <div class="row">
             <div class="row-text">
               <div>Bring in bookmarks and history</div>
@@ -1462,7 +1540,7 @@
 
       <section>
         <h2>About</h2>
-        <div class="card">
+        <div class="card" data-glass>
           <div class="row">
             <div class="row-text">
               <div id="about-version">Rust Browser</div>
@@ -1491,7 +1569,7 @@
 
   <div id="downloads" class="tab-page" tabindex="-1" hidden>
     <div class="panel-inner">
-      <div class="panel-head">
+      <div class="panel-head" data-glass>
         <div class="dl-page-title">
           <span class="dl-page-badge" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg>
@@ -1503,13 +1581,13 @@
       </div>
       <input id="dl-filter" class="text panel-search" type="search" placeholder="Search downloads" aria-label="Search downloads">
       <p id="dl-empty" class="hint">Files you download will show up here.</p>
-      <div id="dl-list" class="card" hidden></div>
+      <div id="dl-list" class="card" data-glass hidden></div>
     </div>
   </div>
 
   <div id="bookmarks" class="panel" hidden>
     <div class="panel-inner">
-      <div class="panel-head">
+      <div class="panel-head" data-glass>
         <h1>Bookmarks</h1>
         <button id="bm-import" class="btn" title="Add bookmarks from a bookmarks file (.html) exported by another browser">Import…</button>
         <button id="bm-export" class="btn" title="Save your bookmarks as a file other browsers can import">Export…</button>
@@ -1517,25 +1595,25 @@
       </div>
       <input id="bm-filter" class="text panel-search" type="search" placeholder="Search bookmarks" aria-label="Search bookmarks">
       <p id="bm-empty" class="hint">Pages you bookmark with the star button or Ctrl+D will show up here.</p>
-      <div id="bm-list" class="card" hidden></div>
+      <div id="bm-list" class="card" data-glass hidden></div>
     </div>
   </div>
 
   <div id="history" class="panel" hidden>
     <div class="panel-inner">
-      <div class="panel-head">
+      <div class="panel-head" data-glass>
         <h1>History</h1>
         <button id="hist-clear" class="btn">Clear history</button>
         <button class="btn panel-done">Done</button>
       </div>
       <input id="hist-filter" class="text panel-search" type="search" placeholder="Search history" aria-label="Search history">
       <p id="hist-empty" class="hint">Pages you visit will show up here.</p>
-      <div id="hist-list" class="card" hidden></div>
+      <div id="hist-list" class="card" data-glass hidden></div>
     </div>
   </div>
 
   <div id="close-confirm" hidden>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="close-confirm-title">
+    <div class="modal-card" data-glass role="dialog" aria-modal="true" aria-labelledby="close-confirm-title">
       <h2 id="close-confirm-title">Download in progress</h2>
       <p id="close-confirm-text">Closing the browser now will cancel active downloads.</p>
       <div class="modal-actions">
@@ -1545,7 +1623,7 @@
     </div>
   </div>
 
-  <div id="toast" role="status"><span id="toast-text"></span><button id="toast-action" hidden></button></div>
+  <div id="toast" role="status" data-glass><span id="toast-text"></span><button id="toast-action" hidden></button></div>
 
 <script>
 (() => {
@@ -1800,6 +1878,7 @@
     const isDl = tab.url === 'about:downloads';
     const split = state.split;
     node.classList.toggle('active', isActive);
+    node.toggleAttribute('data-glass', isActive);
     node.classList.toggle('split-left', !!(split && split[0] === tab.id));
     node.classList.toggle('split-right', !!(split && split[1] === tab.id));
     node.classList.toggle('loading', !!tab.loading);
@@ -2070,6 +2149,9 @@
     setChoice($('set-memory-saver'), s.memorySaver);
     $('memory-saver-hint').textContent = MEMORY_SAVER_HINTS[s.memorySaver] || '';
     setChoice($('set-efficiency'), s.efficiencyMode);
+    $('liquid-glass-hint').textContent =
+      'Apple-style glass for the tab strip, toolbar, panels and the New Tab page: it bends and frosts what is behind it, and lights its edges.'
+      + (s.liquidGlass && state.efficiency ? ' Paused while efficiency mode is on.' : '');
     {
       const about = initData.about || {};
       const gb = about.memory ? Math.round(about.memory / (1024 * 1024 * 1024)) : null;
@@ -2591,6 +2673,7 @@
 
     document.body.classList.toggle('maximized', !!state.maximized);
     document.body.classList.toggle('efficient', !!state.efficiency);
+    document.documentElement.classList.toggle('lg', !!(state.settings && state.settings.liquidGlass));
     const maxLabel = state.maximized ? 'Restore' : 'Maximize';
     if ($('win-max').title !== maxLabel) {
       $('win-max').title = maxLabel;

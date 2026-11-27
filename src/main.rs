@@ -9,6 +9,7 @@ mod device;
 mod display;
 mod download_hook;
 mod downloads;
+mod glass;
 mod history;
 mod import;
 mod ipc;

@@ -222,6 +222,8 @@ pub struct PopupMenu {
     closed_at: Instant,
     /// The tab whose hover card is showing.
     card: Option<TabId>,
+    /// Liquid Glass (see `set_glass`).
+    glass: bool,
 }
 
 impl PopupMenu {
@@ -259,6 +261,7 @@ impl PopupMenu {
             kind: None,
             closed_at: Instant::now() - Duration::from_secs(10),
             card: None,
+            glass: false,
         })
     }
 
@@ -273,7 +276,7 @@ impl PopupMenu {
         let ready_proxy = self.proxy.clone();
         let built = WebViewBuilder::new()
             .with_environment(self.environment.clone())
-            .with_html(MENU_HTML)
+            .with_html(crate::glass::page(MENU_HTML, self.glass))
             .with_theme(self.webview_theme)
             .with_ipc_handler(move |request| {
                 if let Ok(msg) = serde_json::from_str::<UiMsg>(request.body()) {
@@ -473,6 +476,18 @@ impl PopupMenu {
     pub fn set_theme(&mut self, theme: Option<WindowTheme>, webview_theme: wry::Theme) {
         self.window.set_theme(theme);
         self.webview_theme = webview_theme;
+    }
+
+    /// Liquid Glass on or off (off in efficiency mode too).
+    pub fn set_glass(&mut self, on: bool) {
+        if self.glass == on {
+            return;
+        }
+        self.glass = on;
+        if let Some(webview) = &self.webview {
+            let script = format!("document.documentElement.classList.toggle('lg', {on})");
+            let _ = webview.evaluate_script(&script);
+        }
     }
 
     /// A menu replaces any hover card in the same window.
