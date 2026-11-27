@@ -415,6 +415,30 @@
   html.liquid #card,
   html.liquid #mem,
   html.liquid #ts { background-color: transparent; }
+  /* Windows 11: the window itself is frosted glass over the page behind it
+     (Windows' own acrylic, see enable_system_backdrop in src/menu.rs), so the
+     face only tints it. */
+  html.liquid.native-glass { background: transparent; }
+  html.liquid.native-glass body { background-image: none; background-color: var(--lg-native-face); }
+  html.liquid { --lg-native-face: rgb(255 255 255 / 0.52); }
+  @media (prefers-color-scheme: dark) {
+    html.liquid { --lg-native-face: rgb(30 32 38 / 0.55); }
+  }
+
+  /* Controls inside: translucent capsules, like on the other glass. */
+  html.liquid { --pill: var(--lg-line); }
+  html.liquid .sep,
+  html.liquid .mem-foot,
+  html.liquid .ts-head { border-color: var(--lg-line); }
+  html.liquid .sep { background: var(--lg-line); opacity: 1; }
+  html.liquid .zoom-group { border-radius: 14px; background: var(--lg-control); box-shadow: var(--lg-control-rim); }
+  html.liquid .z-btn { border-radius: 11px; }
+  html.liquid .ts-box { border-radius: 18px; background: var(--lg-control); box-shadow: var(--lg-control-rim); }
+  html.liquid .ts-row,
+  html.liquid .mem-row,
+  html.liquid .mem-sleep { border-radius: 10px; }
+  html.liquid #mem-free { border-radius: 16px; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35), 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent); }
+  html.liquid .mem-meter { background: var(--lg-control); }
   html.liquid .item { border-radius: 9px; }
   html.liquid .item:hover:not(:disabled),
   html.liquid .item:focus-visible:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); }

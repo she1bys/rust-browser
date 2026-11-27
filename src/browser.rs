@@ -2215,8 +2215,9 @@ impl Browser {
         }
         let Some(webview) = &tab.webview else { return };
         let proxy = self.proxy.clone();
+        let script = reader_script(self.glass_active());
         log_err(
-            webview.evaluate_script_with_callback(READER_JS, move |result| {
+            webview.evaluate_script_with_callback(&script, move |result| {
                 // The script's return value, as JSON ("\"opened\"").
                 let result = serde_json::from_str::<String>(&result).unwrap_or_default();
                 let _ = proxy.send_event(UserEvent::ReaderResult { id, result });
@@ -3921,6 +3922,15 @@ fn site_label(url: &str) -> String {
     }
 }
 
+/// Reader mode's script, with its toolbar as glass when Liquid Glass is on.
+fn reader_script(glass: bool) -> String {
+    if glass {
+        READER_JS.replacen("})(/* glass */ false);", "})(true);", 1)
+    } else {
+        READER_JS.to_string()
+    }
+}
+
 /// A page whose HTML source can be shown: a web page or a local file (not
 /// the browser's own pages, and not a source view already).
 fn can_view_source(url: &str) -> bool {
@@ -4160,6 +4170,13 @@ mod tests {
         assert_eq!(site_label("file:///C:/notes.html"), "Local file");
         assert_eq!(site_label("view-source:https://example.com/a"), "example.com");
         assert_eq!(site_label("about:blank"), "about:blank");
+    }
+
+    #[test]
+    fn reader_mode_gets_its_glass_switch() {
+        assert!(READER_JS.trim_end().ends_with("})(/* glass */ false);"));
+        assert!(reader_script(true).trim_end().ends_with("})(true);"));
+        assert_eq!(reader_script(false), READER_JS);
     }
 
     #[test]
