@@ -38,12 +38,12 @@ use crate::ipc::{
 use crate::memory;
 use crate::menu::{self, MenuEntry, MenuKind, PopupMenu};
 use crate::newtab::{self, NewTabState, NEW_TAB_URL};
-use crate::session::Session;
+use crate::session::{self, ClosedGroup, ClosedTab, Session};
 use crate::settings::{
     self, EfficiencyMode, NewTabPage, SearchEngine, Settings, SettingsPatch, Startup, Theme, ZOOM_LEVELS,
 };
 use crate::updater::{self, Release};
-use crate::webview_hooks::PopupGestures;
+use crate::webview_hooks::{NewWindowGesture, PopupGestures};
 use crate::window_state::{self, WindowState};
 use crate::{shortcut_hook, url_input, webview_hooks};
 use std::sync::{Arc, RwLock};
@@ -53,7 +53,8 @@ const CHROME_HEIGHT: f64 = 88.0;
 const BOOKMARKS_BAR_HEIGHT: f64 = 32.0;
 const DOWNLOADS_URL: &str = "about:downloads";
 const APP_NAME: &str = "Rust Browser";
-const MAX_CLOSED_TABS: usize = 25;
+/// How many recently closed tabs tab search lists.
+const TAB_SEARCH_CLOSED: usize = 10;
 /// How often download progress is pushed to the UI while the panel is open.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(150);
 /// The first automatic update check waits this long after start-up, so it
@@ -135,6 +136,10 @@ struct Tab {
     /// A small icon-only tab kept at the left end of the strip. Pinned tabs
     /// always come before every other tab in `Browser::tabs`.
     pinned: bool,
+    /// The tab whose link opened this one, until the user moves on to an
+    /// unrelated tab. Decides where the next link from the same page goes,
+    /// and which tab to show when this one closes.
+    opener: Option<TabId>,
     /// The page is playing sound.
     audible: bool,
     muted: bool,
@@ -230,6 +235,8 @@ enum NoticeAction {
     InstallUpdate,
     /// Show a saved file in File Explorer.
     ShowFile(PathBuf),
+    /// "Undo" after closing several tabs at once.
+    ReopenClosed,
 }
 
 /// One open tab in tab search (see `renderTabSearch` in `ui/menu.html`).
@@ -244,9 +251,23 @@ struct TabSearchRow<'a> {
     sleeping: bool,
 }
 
+/// One recently closed tab (or group of tabs) in tab search.
+#[derive(Serialize)]
+struct ClosedRow<'a> {
+    /// Its place in `Browser::closed_tabs`, for `UiMsg::ReopenClosed`.
+    index: usize,
+    title: &'a str,
+    site: String,
+    /// How many tabs reopen together.
+    count: usize,
+    private: bool,
+}
+
 #[derive(Serialize)]
 struct TabSearchView<'a> {
     tabs: Vec<TabSearchRow<'a>>,
+    /// Most recently closed first.
+    closed: Vec<ClosedRow<'a>>,
 }
 
 /// Where the browser is with updating itself.
@@ -391,6 +412,11 @@ enum Placement {
     End,
     AfterActive,
     AfterTab(TabId),
+    /// Opened from a link on this tab: after it and after the tabs it has
+    /// already opened, so links open left to right in the order clicked.
+    ChildOf(TabId),
+    /// At this position (a reopened tab going back where it was).
+    At(usize),
 }
 
 // Field order matters: fields drop top to bottom. Running download handles go
@@ -420,8 +446,13 @@ pub struct Browser {
     exit_requested: bool,
     /// True while showing the "active downloads will be cancelled" prompt.
     confirm_close: bool,
-    /// Most recently closed tabs (address, private) for Ctrl+Shift+T.
-    closed_tabs: Vec<(String, bool)>,
+    /// Recently closed tabs for Ctrl+Shift+T, oldest first; tabs closed
+    /// together are one group. Saved with the session (except private ones).
+    closed_tabs: Vec<ClosedGroup>,
+    /// Goes up whenever `closed_tabs` changes, so the session is saved.
+    closed_rev: u64,
+    /// The `closed_rev` last written to the session file.
+    saved_closed_rev: Cell<u64>,
     /// The "Block pop-ups" setting, shared with every tab's new-window handler.
     block_popups: Rc<Cell<bool>>,
     /// The "Block ads and trackers" setting, shared with every tab's blocker.
@@ -592,6 +623,8 @@ impl Browser {
             exit_requested: false,
             confirm_close: false,
             closed_tabs: Vec::new(),
+            closed_rev: 0,
+            saved_closed_rev: Cell::new(0),
             block_popups: Rc::new(Cell::new(settings.block_popups)),
             block_ads: Rc::new(Cell::new(settings.block_ads)),
             notice_action: None,
@@ -673,6 +706,8 @@ impl Browser {
 
         // Restored tabs load only when they're first opened.
         let session = self.session_path.as_deref().map(Session::load).unwrap_or_default();
+        // "Reopen closed tab" works across restarts.
+        self.closed_tabs = session.closed.clone();
         let mut active = None;
         for (index, url) in session.tabs.iter().enumerate() {
             let pinned = index < session.pinned;
@@ -997,12 +1032,11 @@ impl Browser {
                     }
                 }
             }
-            UserEvent::OpenInNewTab { from, url } => {
+            UserEvent::OpenInNewTab { from, url, background } => {
                 // Only real web links may open tabs; never `javascript:` and friends.
                 // A link from a private tab opens in another private tab.
                 if is_web_url(&url) {
-                    let private = self.tab(from).is_some_and(|t| t.private);
-                    self.open_tab_logged(&url, Placement::AfterTab(from), private);
+                    self.open_link_tab(from, &url, background);
                 }
             }
             UserEvent::PopupBlocked { from, url } => {
@@ -1220,7 +1254,8 @@ impl Browser {
             UiMsg::ImportBookmarksFile => self.import_bookmarks_file(),
             UiMsg::ExportBookmarks => self.export_bookmarks(),
             UiMsg::CloseTab { id } => self.close_tab(id),
-            UiMsg::SelectTab { id, focus } => self.select_tab_with_focus(id, focus),
+            UiMsg::SelectTab { id, focus } => self.user_select_tab(id, focus),
+            UiMsg::ReopenClosed { index } => self.reopen_closed_at(index),
             UiMsg::ReorderTab { id, to_index } => self.reorder_tab(id, to_index),
             UiMsg::ReopenClosedTab => self.reopen_closed_tab(),
             UiMsg::Back => {
@@ -1278,7 +1313,13 @@ impl Browser {
                 if self.history.clear() {
                     self.save_history();
                 }
+                // Recently closed tabs are history too.
+                if !self.closed_tabs.is_empty() {
+                    self.closed_tabs.clear();
+                    self.closed_rev += 1;
+                }
                 self.show_notice("Browsing history cleared", false);
+                self.sync();
             }
             UiMsg::QuerySuggestions { query } => self.send_suggestions(&query),
             UiMsg::ConfirmClose => self.exit_requested = true,
@@ -1366,16 +1407,18 @@ impl Browser {
             }
             Shortcut::NextTab => self.cycle_tab(1),
             Shortcut::PrevTab => self.cycle_tab(-1),
+            Shortcut::MoveTabLeft => self.run_command(BrowserCommand::MoveTabLeft),
+            Shortcut::MoveTabRight => self.run_command(BrowserCommand::MoveTabRight),
             Shortcut::SelectTab(index) => {
                 if let Some(tab) = self.tabs.get(index) {
                     let id = tab.id;
-                    self.select_tab(id);
+                    self.user_select_tab(id, true);
                 }
             }
             Shortcut::LastTab => {
                 if let Some(tab) = self.tabs.last() {
                     let id = tab.id;
-                    self.select_tab(id);
+                    self.user_select_tab(id, true);
                 }
             }
             Shortcut::Downloads => self.open_downloads_tab(),
@@ -1424,6 +1467,8 @@ impl Browser {
             C::Screenshot => self.take_screenshot(),
             C::ImportData => self.import_from_other_browsers(),
             C::ViewSource => self.view_source(),
+            C::MoveTabLeft => self.move_active_tab(-1),
+            C::MoveTabRight => self.move_active_tab(1),
             C::ClearBrowsingData => self.show_settings_section("privacy"),
             C::Exit => self.request_close(),
             // These act on the page, or filter when viewing Downloads / Bookmarks / History.
@@ -1488,7 +1533,7 @@ impl Browser {
             MenuEntry::item(C::NewPrivateTab, "New private tab", "Ctrl+Shift+N", "privateTab", true),
             MenuEntry::item(
                 C::ReopenClosedTab,
-                "Reopen closed tab",
+                self.reopen_label(),
                 "Ctrl+Shift+T",
                 "reopen",
                 !self.closed_tabs.is_empty(),
@@ -1653,7 +1698,7 @@ impl Browser {
             MenuEntry::Sep,
             MenuEntry::tab_item(
                 T::ReopenClosed,
-                "Reopen closed tab",
+                self.reopen_label(),
                 "Ctrl+Shift+T",
                 "reopen",
                 !self.closed_tabs.is_empty(),
@@ -1698,18 +1743,14 @@ impl Browser {
             T::CloseOthers => {
                 let others: Vec<TabId> = self.tabs.iter().filter(|t| t.id != id && !t.pinned).map(|t| t.id).collect();
                 self.select_tab(id);
-                for other in others {
-                    self.close_tab(other);
-                }
+                self.close_tabs_together(&others);
             }
             T::CloseToTheRight => {
                 let right: Vec<TabId> = self.tabs.iter().skip(index + 1).filter(|t| !t.pinned).map(|t| t.id).collect();
                 if self.active.is_some_and(|a| right.contains(&a)) {
                     self.select_tab(id);
                 }
-                for other in right {
-                    self.close_tab(other);
-                }
+                self.close_tabs_together(&right);
             }
             T::ReopenClosed => self.reopen_closed_tab(),
         }
@@ -2109,6 +2150,7 @@ impl Browser {
                 }
             }
             NoticeAction::InstallUpdate => self.install_update(),
+            NoticeAction::ReopenClosed => self.reopen_closed_tab(),
             NoticeAction::ShowFile(path) => {
                 spawn_explorer(Command::new("explorer.exe").raw_arg(format!("/select,\"{}\"", path.display())))
             }
@@ -2147,11 +2189,32 @@ impl Browser {
                     sleeping: t.webview.is_none() && !is_downloads_url(&t.url),
                 })
                 .collect(),
+            closed: self
+                .closed_tabs
+                .iter()
+                .enumerate()
+                .rev()
+                .take(TAB_SEARCH_CLOSED)
+                .filter_map(|(index, group)| {
+                    let first = group.first()?;
+                    let site =
+                        if is_downloads_url(&first.url) { "Downloads".to_string() } else { site_label(&first.url) };
+                    Some(ClosedRow {
+                        index,
+                        title: &first.title,
+                        site,
+                        count: group.len(),
+                        private: group.iter().any(|t| t.private),
+                    })
+                })
+                .collect(),
         };
         let Ok(json) = serde_json::to_string(&view) else { return };
         let width = f64::from(self.window.inner_size().width) / self.window.scale_factor();
         let (sx, sy) = self.to_screen((width + menu::TAB_SEARCH_WIDTH) / 2.0, 40.0);
-        self.menu.show_tab_search(&self.window, sx, sy, view.tabs.len(), &json);
+        // The "Recently closed" heading takes about a row.
+        let rows = view.tabs.len() + view.closed.len() + usize::from(!view.closed.is_empty());
+        self.menu.show_tab_search(&self.window, sx, sy, rows, &json);
     }
 
     // ---- screenshots ----------------------------------------------------
@@ -3217,18 +3280,141 @@ impl Browser {
     /// the address bar ready for typing. A new private tab always starts blank.
     fn new_tab(&mut self, private: bool) {
         let url = if private { NEW_TAB_URL.to_string() } else { self.new_tab_url() };
+        // A new tab starts something new: links opened earlier no longer
+        // belong together.
+        self.forget_openers_except(None);
         self.open_tab_logged(&url, Placement::End, private);
         self.focus_address();
     }
 
+    /// A link on tab `from` asked for a new tab: open it next to the tab's
+    /// earlier links, in front or (Ctrl+click) in the background.
+    fn open_link_tab(&mut self, from: TabId, url: &str, background: bool) {
+        let private = self.tab(from).is_some_and(|t| t.private);
+        match self.open_tab(url, !background, Placement::ChildOf(from), private) {
+            Ok(id) => {
+                if let Some(tab) = self.tab_mut(id) {
+                    tab.opener = Some(from);
+                    if background {
+                        // Out of sight from the start.
+                        tab.set_webview_low_memory(true);
+                    }
+                }
+            }
+            Err(e) => self.show_notice(&format!("Couldn't open tab: {e}"), true),
+        }
+    }
+
+    /// "Reopen closed tab" / "Reopen 3 closed tabs" (what Ctrl+Shift+T brings back).
+    fn reopen_label(&self) -> String {
+        match self.closed_tabs.last().map(Vec::len) {
+            Some(n) if n > 1 => format!("Reopen {n} closed tabs"),
+            _ => "Reopen closed tab".to_string(),
+        }
+    }
+
+    /// Ctrl+Shift+T: brings back the last closed tab, or all the tabs closed
+    /// together last.
     fn reopen_closed_tab(&mut self) {
-        if let Some((url, private)) = self.closed_tabs.pop() {
-            if is_downloads_url(&url) {
+        if let Some(group) = self.closed_tabs.pop() {
+            self.closed_rev += 1;
+            self.restore_closed(group);
+        }
+    }
+
+    /// Reopens one entry of the recently closed list (from tab search).
+    fn reopen_closed_at(&mut self, index: usize) {
+        if index < self.closed_tabs.len() {
+            let group = self.closed_tabs.remove(index);
+            self.closed_rev += 1;
+            self.restore_closed(group);
+        }
+    }
+
+    /// Puts closed tabs back where they were, pinned if they were, with
+    /// their titles and icons. One tab is opened and shown; several (an undone
+    /// "Close other tabs") come back without loading, until each is opened.
+    fn restore_closed(&mut self, mut group: ClosedGroup) {
+        group.sort_by_key(|t| t.index);
+        let single = group.len() == 1;
+        let mut shown = None;
+        for closed in group {
+            if is_downloads_url(&closed.url) {
                 self.open_downloads_tab();
-            } else {
-                self.open_tab_logged(&url, Placement::AfterActive, private);
+                continue;
+            }
+            let id = self.push_lazy_tab(&closed.url, closed.title, Placement::At(closed.index), closed.private);
+            if let Some(tab) = self.tab_mut(id) {
+                tab.favicon = closed.favicon;
+            }
+            if closed.pinned {
+                // Back among the pinned tabs, at its old place among them.
+                if let Some(from) = self.tabs.iter().position(|t| t.id == id) {
+                    let mut tab = self.tabs.remove(from);
+                    tab.pinned = true;
+                    let to = closed.index.min(self.pinned_count());
+                    self.tabs.insert(to, tab);
+                }
+            }
+            shown.get_or_insert(id);
+        }
+        match shown {
+            Some(id) if single => self.select_tab(id),
+            _ => self.sync(),
+        }
+    }
+
+    /// Closes several tabs as one: Ctrl+Shift+T (or "Undo") brings them all
+    /// back. The active tab must not be among them.
+    fn close_tabs_together(&mut self, ids: &[TabId]) {
+        // Right to left, so each tab's recorded position is where it was
+        // before any of them closed.
+        let mut order: Vec<(usize, TabId)> =
+            ids.iter().filter_map(|&id| Some((self.tabs.iter().position(|t| t.id == id)?, id))).collect();
+        order.sort_unstable_by_key(|&(index, _)| std::cmp::Reverse(index));
+        let mut group: ClosedGroup = order.into_iter().filter_map(|(_, id)| self.remove_tab(id)).collect();
+        if group.is_empty() {
+            return;
+        }
+        group.reverse();
+        let count = group.len();
+        self.remember_closed(group);
+        if count > 1 {
+            self.show_notice_with_action(&format!("Closed {count} tabs"), "Undo", NoticeAction::ReopenClosed);
+        }
+    }
+
+    fn remember_closed(&mut self, group: ClosedGroup) {
+        self.closed_tabs.push(group);
+        let extra = self.closed_tabs.len().saturating_sub(session::MAX_CLOSED);
+        self.closed_tabs.drain(..extra);
+        self.closed_rev += 1;
+    }
+
+    /// The user chose tab `id` (clicked it, picked it in tab search, or used
+    /// a tab shortcut).
+    fn user_select_tab(&mut self, id: TabId, focus: bool) {
+        self.forget_openers_except(Some(id));
+        self.select_tab_with_focus(id, focus);
+    }
+
+    /// Links opened from a page stay together while the user moves among
+    /// that page and the tabs it opened; going to any other tab ends that,
+    /// like in Chrome. `None` forgets them all.
+    fn forget_openers_except(&mut self, id: Option<TabId>) {
+        let family = id.map(|id| (id, self.tab(id).and_then(|t| t.opener).unwrap_or(id)));
+        for tab in &mut self.tabs {
+            if tab.opener.is_some_and(|o| family.is_none_or(|(id, root)| o != id && o != root)) {
+                tab.opener = None;
             }
         }
+    }
+
+    /// Ctrl+Shift+Page Up / Page Down: moves the current tab one place.
+    fn move_active_tab(&mut self, step: isize) {
+        let (Some(id), Some(index)) = (self.active, self.active_index()) else { return };
+        let target = (index as isize + step).clamp(0, self.tabs.len() as isize - 1) as usize;
+        self.reorder_tab(id, target);
     }
 
     fn open_tab_logged(&mut self, url: &str, placement: Placement, private: bool) {
@@ -3255,6 +3441,7 @@ impl Browser {
             zoom_percent: self.settings.zoom_percent,
             private,
             pinned: false,
+            opener: None,
             audible: false,
             muted: false,
             hidden_since: Cell::new(None),
@@ -3268,6 +3455,14 @@ impl Browser {
             Placement::AfterTab(other) => {
                 self.tabs.iter().position(|t| t.id == other).map_or(self.tabs.len(), |i| i + 1)
             }
+            Placement::ChildOf(opener) => match self.tabs.iter().position(|t| t.id == opener) {
+                Some(at) => {
+                    let strip: Vec<Option<TabId>> = self.tabs.iter().map(|t| t.opener).collect();
+                    child_insert_index(&strip, at, opener, self.pinned_count())
+                }
+                None => self.tabs.len(),
+            },
+            Placement::At(index) => index.min(self.tabs.len()),
         };
         // New tabs are never pinned, so they go after the pinned ones.
         let index = index.max(self.pinned_count());
@@ -3320,8 +3515,11 @@ impl Browser {
                 // Whether this request came from a click, recorded by the
                 // hook in webview_hooks.rs. If that hook isn't there, assume
                 // it did rather than break links.
-                let clicked = popup_gestures.borrow_mut().pop_front().unwrap_or(true);
-                if !clicked && block_popups.get() {
+                let gesture = popup_gestures
+                    .borrow_mut()
+                    .pop_front()
+                    .unwrap_or(NewWindowGesture { user: true, background: false });
+                if !gesture.user && block_popups.get() {
                     let _ = popup_proxy.send_event(UserEvent::PopupBlocked { from: id, url });
                     NewWindowResponse::Deny
                 } else if features.position.is_some() || features.size.is_some() {
@@ -3330,7 +3528,8 @@ impl Browser {
                     NewWindowResponse::Allow
                 } else {
                     // Regular new-tab links open inside a new browser tab.
-                    let _ = popup_proxy.send_event(UserEvent::OpenInNewTab { from: id, url });
+                    let background = gesture.background;
+                    let _ = popup_proxy.send_event(UserEvent::OpenInNewTab { from: id, url, background });
                     NewWindowResponse::Deny
                 }
             })
@@ -3537,7 +3736,17 @@ impl Browser {
     }
 
     fn close_tab(&mut self, id: TabId) {
-        let Some(index) = self.tabs.iter().position(|t| t.id == id) else { return };
+        if let Some(closed) = self.remove_tab(id) {
+            self.remember_closed(vec![closed]);
+            self.sync();
+        }
+    }
+
+    /// Closes tab `id` and moves on to the right next tab. Returns what
+    /// "Reopen closed tab" needs to bring it back (`None` for an empty new
+    /// tab, or when this was the last tab and the browser is closing).
+    fn remove_tab(&mut self, id: TabId) -> Option<ClosedTab> {
+        let index = self.tabs.iter().position(|t| t.id == id)?;
         if self.menu.card_tab() == Some(id) {
             self.hover = None;
             self.menu.hide_card();
@@ -3546,7 +3755,7 @@ impl Browser {
             // Closing the last tab closes the browser, like Chrome. The tab
             // stays in the saved session so it can be restored next time.
             self.request_close();
-            return;
+            return None;
         }
         if self.fullscreen_tab == Some(id) {
             self.exit_fullscreen();
@@ -3567,22 +3776,31 @@ impl Browser {
         }
         let was_active = self.active == Some(id);
         let closed = self.tabs.remove(index);
-        if closed.url != NEW_TAB_URL && !closed.url.is_empty() {
-            // Kept in memory only, so private tabs can be reopened too.
-            self.closed_tabs.push((closed.url.clone(), closed.private));
-            if self.closed_tabs.len() > MAX_CLOSED_TABS {
-                self.closed_tabs.remove(0);
+        // Tabs it opened no longer have an opener.
+        for tab in &mut self.tabs {
+            if tab.opener == Some(id) {
+                tab.opener = None;
             }
         }
+        let record = (closed.url != NEW_TAB_URL && !closed.url.is_empty()).then(|| ClosedTab {
+            url: closed.url.clone(),
+            title: closed.title.clone(),
+            favicon: closed.favicon.clone(),
+            index,
+            pinned: closed.pinned,
+            private: closed.private,
+        });
 
         // Move on to another tab first (which also moves keyboard focus),
         // and only then get rid of the closed one.
         if was_active {
             // If closing a split pane, keep focus on its visible partner;
-            // otherwise prefer the tab that slid into this position.
+            // otherwise go back the way the user came (see next_after_close).
+            let strip: Vec<(TabId, Option<TabId>)> = self.tabs.iter().map(|t| (t.id, t.opener)).collect();
             let next = split_partner
                 .filter(|partner| self.tab(*partner).is_some())
-                .unwrap_or_else(|| self.tabs[index.min(self.tabs.len() - 1)].id);
+                .or_else(|| next_after_close(&strip, index, closed.opener))
+                .unwrap_or(self.tabs[0].id);
             self.select_tab(next);
         } else {
             if was_active_split {
@@ -3600,6 +3818,7 @@ impl Browser {
         } else {
             drop(closed); // destroys the web view
         }
+        record
     }
 
     fn cycle_tab(&mut self, direction: isize) {
@@ -3609,7 +3828,7 @@ impl Browser {
             return;
         }
         let next = (i as isize + direction).rem_euclid(n) as usize;
-        self.select_tab(self.tabs[next].id);
+        self.user_select_tab(self.tabs[next].id, true);
     }
 
     fn focus_address(&self) {
@@ -3792,6 +4011,7 @@ impl Browser {
                 && prev.titles.len() == count
                 && prev.active == active_idx.unwrap_or(0)
                 && prev.pinned == pinned
+                && self.saved_closed_rev.get() == self.closed_rev
             {
                 return;
             }
@@ -3804,7 +4024,10 @@ impl Browser {
             active: kept.iter().position(|t| Some(t.id) == self.active).unwrap_or(0),
             // Pinned tabs come first, so they are the leading saved tabs too.
             pinned: kept.iter().take_while(|t| t.pinned).count(),
+            // Private ones are left out here.
+            closed: session::sanitize_closed(self.closed_tabs.clone()),
         };
+        self.saved_closed_rev.set(self.closed_rev);
         let mut saved = self.saved_session.borrow_mut();
         if saved.as_ref() != Some(&session) {
             if let Err(e) = session.save(path) {
@@ -3849,6 +4072,38 @@ impl Browser {
         self.tabs.insert(to, tab);
         self.sync();
     }
+}
+
+/// Where a tab opened from a link on the tab at `opener_index` goes: after
+/// that tab and after the tabs it already opened next to it, so several
+/// links open left to right in the order they were clicked. Never among the
+/// first `pinned` (pinned) tabs. `openers`: each tab's opener, in order.
+fn child_insert_index(openers: &[Option<TabId>], opener_index: usize, opener: TabId, pinned: usize) -> usize {
+    let mut index = (opener_index + 1).max(pinned).min(openers.len());
+    while index < openers.len() && openers[index] == Some(opener) {
+        index += 1;
+    }
+    index
+}
+
+/// Which tab to show after the active tab, which was at `index` and was
+/// opened from `opener`, closed. `tabs`: the remaining tabs (id, opener).
+/// Like Chrome: a tab opened from a link goes back to the next tab opened
+/// from the same page, then the previous one, then the page itself;
+/// otherwise the tab that slid into its place, or the one before it.
+fn next_after_close(tabs: &[(TabId, Option<TabId>)], index: usize, opener: Option<TabId>) -> Option<TabId> {
+    let last = tabs.len().checked_sub(1)?;
+    let at = index.min(tabs.len());
+    if let Some(opener) = opener {
+        let sibling = |t: &&(TabId, Option<TabId>)| t.1 == Some(opener);
+        if let Some(t) = tabs[at..].iter().find(sibling).or_else(|| tabs[..at].iter().rev().find(sibling)) {
+            return Some(t.0);
+        }
+        if tabs.iter().any(|t| t.0 == opener) {
+            return Some(opener);
+        }
+    }
+    Some(tabs[index.min(last)].0)
 }
 
 /// Where a dragged tab may land: pinned tabs stay among the first
@@ -4160,6 +4415,42 @@ mod tests {
         assert!(!can_view_source(NEW_TAB_URL));
         assert!(!can_view_source(DOWNLOADS_URL));
         assert!(!can_view_source(""));
+    }
+
+    #[test]
+    fn links_open_in_order_after_their_page() {
+        // [Page(1), A(2, from 1), B(3, from 1), Other(4)]: the next link from
+        // page 1 goes after B, not straight after the page.
+        let openers = [None, Some(1), Some(1), None];
+        assert_eq!(child_insert_index(&openers, 0, 1, 0), 3);
+        // A link from the last tab goes at the end.
+        assert_eq!(child_insert_index(&openers, 3, 4, 0), 4);
+        // A link from a tab with no earlier links goes right after it.
+        assert_eq!(child_insert_index(&[None, None, None], 1, 2, 0), 2);
+        // A link from a pinned tab goes after all the pinned tabs (and after
+        // its earlier links there).
+        assert_eq!(child_insert_index(&[None, None, Some(1), None], 0, 1, 2), 3);
+        assert_eq!(child_insert_index(&[None, None], 0, 1, 2), 2);
+    }
+
+    #[test]
+    fn closing_a_tab_goes_back_the_way_the_user_came() {
+        // Page 1 opened 2 and 3; tab 2 (at index 1) closes, so 3 is next.
+        let after = [(1, None), (3, Some(1)), (4, None)];
+        assert_eq!(next_after_close(&after, 1, Some(1)), Some(3));
+        // The last link from a page closes: back to its sibling on the left...
+        let after = [(1, None), (2, Some(1)), (4, None)];
+        assert_eq!(next_after_close(&after, 2, Some(1)), Some(2));
+        // ...and with no siblings left, back to the page itself, not the
+        // unrelated tab that slid into place.
+        let after = [(1, None), (4, None)];
+        assert_eq!(next_after_close(&after, 1, Some(1)), Some(1));
+        // No opener (or the opener is gone): the tab that slid into place,
+        // or the one before when the last tab closed.
+        assert_eq!(next_after_close(&after, 1, None), Some(4));
+        assert_eq!(next_after_close(&after, 2, None), Some(4));
+        assert_eq!(next_after_close(&after, 1, Some(9)), Some(4));
+        assert_eq!(next_after_close(&[], 0, None), None);
     }
 
     #[test]

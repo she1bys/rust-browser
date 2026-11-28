@@ -28,6 +28,8 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
 
 - Chrome-style window: no separate title bar; the tab strip is the title bar, with minimize, maximize and close at its right end. Drag empty tab-strip space to move the window, double-click it to maximize
 - Tabs: open, close, switch, smooth drag-to-reorder, middle-click to close, reopen closed tabs (`Ctrl+Shift+T`), favicons, links that ask for a new window open in a new tab (while sized popups like OAuth logins keep their opener)
+- Opening and closing tabs works the way you expect: links from a page open next to it in the order you click them; Ctrl+click opens a link in the background (the new tab glows briefly so you see where it went); closing a tab you opened from a link takes you back to the page you came from; and when you close tabs with the mouse, the tabs hold their width until the mouse leaves the tab strip, so the next tab's close button is right under the pointer
+- Reopen closed tabs (Ctrl+Shift+T) puts each tab back where it was, pinned if it was, with its title and icon; "Close other tabs" and "Close tabs to the right" come back in one go (or with the Undo button that appears). Recently closed tabs are remembered across restarts (never private ones; Clear history clears them) and listed in tab search (Ctrl+Shift+A)
 - Pinned tabs (tab right-click menu > "Pin tab"): small icon-only tabs kept at the left end of the strip. They come back every time the browser starts, whatever "On startup" says, and "Close other tabs" / "Close tabs to the right" leave them open
 - Remembers the window: it opens at the size and place it had last time, maximized if it was (or at the default place if that monitor is gone)
 - Split View: view two tabs side-by-side from the toolbar split button, the 3-dot menu, or the tab right-click menu ("Split with current tab"), with a toolbar swap button and automatic pane-focus tracking
@@ -94,6 +96,10 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
 | Ctrl+Shift+Delete | Clear browsing data (opens Settings > Privacy) |
 | Ctrl+W | Close tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
+| Ctrl+Page Down / Ctrl+Page Up | Next / previous tab |
+| Ctrl+Shift+Page Up / Page Down | Move the tab left / right |
+| Ctrl+F4 | Close tab |
+| Ctrl+click a link | Open it in a background tab |
 | Ctrl+1..8 / Ctrl+9 | Switch to tab 1–8 / last tab |
 | Ctrl+L or Alt+D | Focus the address bar |
 | F5 or Ctrl+R | Reload |

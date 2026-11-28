@@ -382,6 +382,9 @@
   .ts-site { margin-top: 2px; color: var(--muted); font-size: 11.5px; }
   .ts-tag { flex: none; padding: 2px 6px; border-radius: 5px; background: var(--pill); color: var(--muted); font-size: 10.5px; }
   .ts-empty { padding: 18px 12px; color: var(--muted); text-align: center; }
+  .ts-section { padding: 10px 10px 4px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+  .ts-row.closed .ts-title { font-weight: 500; }
+  .ts-row.closed .ts-letter { opacity: 0.6; }
 </style>
 </head>
 <body>
@@ -401,7 +404,7 @@
     <div class="ts-head">
       <div class="ts-box">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>
-        <input id="ts-q" type="text" spellcheck="false" autocomplete="off" placeholder="Search open tabs" aria-label="Search open tabs">
+        <input id="ts-q" type="text" spellcheck="false" autocomplete="off" placeholder="Search open and recently closed tabs" aria-label="Search open and recently closed tabs">
         <span id="ts-count"></span>
       </div>
     </div>
@@ -625,11 +628,13 @@
   const $tsQuery = document.getElementById('ts-q');
   const $tsList = document.getElementById('ts-list');
   let tsTabs = [];
+  let tsClosed = [];
   let tsShown = [];
   let tsSelected = 0;
 
   function tsPick(tab) {
-    send({ type: 'selectTab', id: tab.id });
+    if (tab.closed) send({ type: 'reopenClosed', index: tab.index });
+    else send({ type: 'selectTab', id: tab.id });
     send({ type: 'closeMenu' });
   }
 
@@ -640,20 +645,29 @@
 
   function tsDraw() {
     const words = $tsQuery.value.toLowerCase().split(/\s+/).filter(Boolean);
-    tsShown = words.length ? tsTabs.filter((t) => tsMatches(t, words)) : tsTabs;
+    const open = words.length ? tsTabs.filter((t) => tsMatches(t, words)) : tsTabs;
+    const closed = words.length ? tsClosed.filter((t) => tsMatches(t, words)) : tsClosed;
+    // Arrow keys and Enter move through both lists as one.
+    tsShown = open.concat(closed);
     tsSelected = Math.min(tsSelected, Math.max(0, tsShown.length - 1));
-    document.getElementById('ts-count').textContent = words.length ? tsShown.length + ' of ' + tsTabs.length : tsTabs.length + (tsTabs.length === 1 ? ' tab' : ' tabs');
+    document.getElementById('ts-count').textContent = words.length ? open.length + ' of ' + tsTabs.length : tsTabs.length + (tsTabs.length === 1 ? ' tab' : ' tabs');
     $tsList.textContent = '';
     if (!tsShown.length) {
       const empty = document.createElement('div');
       empty.className = 'ts-empty';
-      empty.textContent = 'No open tab matches "' + $tsQuery.value.trim() + '"';
+      empty.textContent = 'No open or recently closed tab matches "' + $tsQuery.value.trim() + '"';
       $tsList.append(empty);
       return;
     }
     tsShown.forEach((tab, index) => {
+      if (tab.closed && (index === 0 || !tsShown[index - 1].closed)) {
+        const head = document.createElement('div');
+        head.className = 'ts-section';
+        head.textContent = 'Recently closed';
+        $tsList.append(head);
+      }
       const row = document.createElement('button');
-      row.className = 'ts-row' + (index === tsSelected ? ' selected' : '') + (tab.active ? ' active' : '');
+      row.className = 'ts-row' + (index === tsSelected ? ' selected' : '') + (tab.active ? ' active' : '') + (tab.closed ? ' closed' : '');
       row.setAttribute('role', 'option');
       row.setAttribute('aria-selected', String(index === tsSelected));
       row.tabIndex = -1;
@@ -665,12 +679,15 @@
       const title = document.createElement('div');
       title.className = 'ts-title';
       title.textContent = tab.title || tab.site;
+      if (tab.closed && tab.count > 1) title.textContent += ' and ' + (tab.count - 1) + (tab.count === 2 ? ' other tab' : ' other tabs');
       const site = document.createElement('div');
       site.className = 'ts-site';
       site.textContent = tab.site;
       text.append(title, site);
       row.append(letter, text);
       const tags = [];
+      if (tab.closed && tab.count > 1) tags.push(tab.count + ' tabs');
+      if (tab.closed) tags.push('Reopen');
       if (tab.active) tags.push('Current');
       if (tab.private) tags.push('Private');
       if (tab.audible) tags.push('Sound');
@@ -691,11 +708,13 @@
   }
 
   function tsHighlight() {
-    [...$tsList.children].forEach((row, i) => {
+    // Rows only: the "Recently closed" heading isn't one.
+    const rows = [...$tsList.querySelectorAll('.ts-row')];
+    rows.forEach((row, i) => {
       row.classList.toggle('selected', i === tsSelected);
       row.setAttribute('aria-selected', String(i === tsSelected));
     });
-    const row = $tsList.children[tsSelected];
+    const row = rows[tsSelected];
     if (row) row.scrollIntoView({ block: 'nearest' });
   }
 
@@ -707,6 +726,7 @@
     document.getElementById('card').hidden = true;
     $ts.hidden = false;
     tsTabs = v.tabs || [];
+    tsClosed = (v.closed || []).map((c) => Object.assign({ closed: true }, c));
     $tsQuery.value = '';
     tsSelected = 0;
     tsDraw();

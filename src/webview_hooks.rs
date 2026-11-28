@@ -34,17 +34,27 @@ use windows::{
     core::{Interface, BOOL, HSTRING, PWSTR},
     Win32::System::Com::IStream,
 };
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_SHIFT};
 use wry::{WebView, WebViewExtWindows};
 
 use crate::adblock;
 use crate::ipc::{ProcessFailure, RendererInfo, TabId, UserEvent};
 use crate::settings::TrackingPrevention;
 
-/// Whether each pending new-window request came from a click, oldest first.
-/// Filled here, emptied by the browser's new-window handler (see
-/// `Browser::ensure_tab_webview`), which runs for the same requests in the
-/// same order slightly later.
-pub type PopupGestures = Rc<RefCell<VecDeque<bool>>>;
+/// How a page asked for a new window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NewWindowGesture {
+    /// It came from a click (the pop-up blocker lets these through).
+    pub user: bool,
+    /// Ctrl was held: open the tab in the background, as other browsers do
+    /// for Ctrl+click (Ctrl+Shift+click opens it in front).
+    pub background: bool,
+}
+
+/// Each pending new-window request, oldest first. Filled here, emptied by
+/// the browser's new-window handler (see `Browser::ensure_tab_webview`),
+/// which runs for the same requests in the same order slightly later.
+pub type PopupGestures = Rc<RefCell<VecDeque<NewWindowGesture>>>;
 
 /// Blocks ad and tracker requests in this tab while `enabled` is set (the
 /// "Block ads and trackers" setting), counting them in `blocked`. WebView2
@@ -188,7 +198,11 @@ pub fn attach(
                 let Some(args) = args else { return Ok(()) };
                 let mut user = BOOL(1);
                 args.IsUserInitiated(&mut user)?;
-                gestures.borrow_mut().push_back(user.as_bool());
+                // The keys as they are right now, while the click is handled.
+                let held = |vk: u16| GetAsyncKeyState(i32::from(vk)) < 0;
+                let user = user.as_bool();
+                let background = user && held(VK_CONTROL) && !held(VK_SHIFT);
+                gestures.borrow_mut().push_back(NewWindowGesture { user, background });
                 Ok(())
             })),
             &mut token,
@@ -576,7 +590,7 @@ pub fn find(webview: &WebView, tab: TabId, proxy: EventLoopProxy<UserEvent>) -> 
 /// must already have keyboard focus.
 pub fn press_ctrl_f() {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
     };
     let key = |vk: u16, up: bool| INPUT {
         r#type: INPUT_KEYBOARD,

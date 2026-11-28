@@ -15,7 +15,8 @@ use webview2_com::{
     },
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VK_CONTROL, VK_DELETE, VK_F11, VK_F9, VK_HOME, VK_MENU, VK_NUMPAD0, VK_OEM_COMMA, VK_SHIFT, VK_TAB,
+    GetKeyState, VK_CONTROL, VK_DELETE, VK_F11, VK_F4, VK_F9, VK_HOME, VK_MENU, VK_NEXT, VK_NUMPAD0, VK_OEM_COMMA,
+    VK_PRIOR, VK_SHIFT, VK_TAB,
 };
 use wry::{WebView, WebViewExtWindows};
 
@@ -31,7 +32,16 @@ pub fn shortcut_for(key: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Shor
     const F11: u32 = VK_F11 as u32;
     const F9: u32 = VK_F9 as u32;
     const DELETE: u32 = VK_DELETE as u32;
+    const F4: u32 = VK_F4 as u32;
+    const PAGE_UP: u32 = VK_PRIOR as u32;
+    const PAGE_DOWN: u32 = VK_NEXT as u32;
     match (ctrl, shift, alt, key) {
+        // The tab keys every other browser has too.
+        (true, false, false, F4) => Some(Shortcut::CloseTab),
+        (true, false, false, PAGE_DOWN) => Some(Shortcut::NextTab),
+        (true, false, false, PAGE_UP) => Some(Shortcut::PrevTab),
+        (true, true, false, PAGE_UP) => Some(Shortcut::MoveTabLeft),
+        (true, true, false, PAGE_DOWN) => Some(Shortcut::MoveTabRight),
         (true, false, false, k) if k == 'U' as u32 => Some(Shortcut::ViewSource),
         (true, true, false, DELETE) => Some(Shortcut::ClearBrowsingData),
         (false, false, false, F9) => Some(Shortcut::Reader),
@@ -93,7 +103,11 @@ pub fn attach(webview: &WebView, tab: TabId, proxy: EventLoopProxy<UserEvent>) -
             let mut status = COREWEBVIEW2_PHYSICAL_KEY_STATUS::default();
             args.PhysicalKeyStatus(&mut status)?;
             let repeat = status.WasKeyDown.as_bool();
-            if !repeat || matches!(shortcut, Shortcut::NextTab | Shortcut::PrevTab) {
+            let repeats = matches!(
+                shortcut,
+                Shortcut::NextTab | Shortcut::PrevTab | Shortcut::MoveTabLeft | Shortcut::MoveTabRight
+            );
+            if !repeat || repeats {
                 let _ = proxy.send_event(UserEvent::Shortcut(tab, shortcut));
             }
         }
@@ -141,6 +155,14 @@ mod tests {
         assert_eq!(shortcut_for('E' as u32, false, false, true), Some(Shortcut::Menu));
         assert_eq!(shortcut_for('U' as u32, true, false, false), Some(Shortcut::ViewSource));
         assert_eq!(shortcut_for(VK_DELETE as u32, true, true, false), Some(Shortcut::ClearBrowsingData));
+        assert_eq!(shortcut_for(VK_F4 as u32, true, false, false), Some(Shortcut::CloseTab));
+        assert_eq!(shortcut_for(VK_NEXT as u32, true, false, false), Some(Shortcut::NextTab));
+        assert_eq!(shortcut_for(VK_PRIOR as u32, true, false, false), Some(Shortcut::PrevTab));
+        assert_eq!(shortcut_for(VK_PRIOR as u32, true, true, false), Some(Shortcut::MoveTabLeft));
+        assert_eq!(shortcut_for(VK_NEXT as u32, true, true, false), Some(Shortcut::MoveTabRight));
+        // Page Up / Down alone scroll the page; Alt+F4 closes the window (Windows' own).
+        assert_eq!(shortcut_for(VK_NEXT as u32, false, false, false), None);
+        assert_eq!(shortcut_for(VK_F4 as u32, false, false, true), None);
         // Plain Delete and Ctrl+Delete (delete a word) stay with the page.
         assert_eq!(shortcut_for(VK_DELETE as u32, false, false, false), None);
         assert_eq!(shortcut_for(VK_DELETE as u32, true, false, false), None);

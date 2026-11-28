@@ -83,6 +83,9 @@ pub enum Command {
     ViewSource,
     /// Ctrl+Shift+Delete: Settings, at "Clear browsing data".
     ClearBrowsingData,
+    /// Ctrl+Shift+Page Up / Page Down: move the current tab one place.
+    MoveTabLeft,
+    MoveTabRight,
     Find,
     Print,
     SavePage,
@@ -255,6 +258,11 @@ pub enum UiMsg {
     InstallUpdate,
     /// Bring in bookmarks from a bookmarks file (.html) another browser exported.
     ImportBookmarksFile,
+    /// Tab search's "Recently closed": reopen the close at `index` in the
+    /// list of recently closed tabs (0 = the oldest kept).
+    ReopenClosed {
+        index: usize,
+    },
     /// Save all bookmarks as a bookmarks file other browsers can import.
     ExportBookmarks,
 }
@@ -314,6 +322,10 @@ pub enum Shortcut {
     ViewSource,
     /// Ctrl+Shift+Delete.
     ClearBrowsingData,
+    /// Ctrl+Shift+Page Up.
+    MoveTabLeft,
+    /// Ctrl+Shift+Page Down.
+    MoveTabRight,
     /// Alt+F or Alt+E: open the main menu.
     Menu,
 }
@@ -373,9 +385,11 @@ pub enum UserEvent {
         factor: f64,
     },
     /// A page asked for a new window (`target=_blank`, `window.open`).
+    /// `background`: Ctrl+click, so the tab opens without being switched to.
     OpenInNewTab {
         from: TabId,
         url: String,
+        background: bool,
     },
     /// A page tried to open a window without being clicked, and it was blocked.
     PopupBlocked {
@@ -585,6 +599,13 @@ mod tests {
             UiMsg::ImportBookmarksFile
         );
         assert_eq!(serde_json::from_str::<UiMsg>(r#"{"type":"exportBookmarks"}"#).unwrap(), UiMsg::ExportBookmarks);
+        assert_eq!(
+            serde_json::from_str::<UiMsg>(r#"{"type":"reopenClosed","index":3}"#).unwrap(),
+            UiMsg::ReopenClosed { index: 3 }
+        );
+        assert!(serde_json::from_str::<UiMsg>(r#"{"type":"reopenClosed","index":-1}"#).is_err());
+        let m: UiMsg = serde_json::from_str(r#"{"type":"command","command":"moveTabLeft"}"#).unwrap();
+        assert_eq!(m, UiMsg::Command { command: Command::MoveTabLeft });
         assert_eq!(
             serde_json::from_str::<UiMsg>(r#"{"type":"importFrom","source":"edge"}"#).unwrap(),
             UiMsg::ImportFrom { source: ImportSource::Edge }
