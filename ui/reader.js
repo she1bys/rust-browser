@@ -7,9 +7,7 @@
 // mostly links (menus, related-story lists). The block with the most points
 // is the article. Only text, headings, lists, quotes, code, images and links
 // are copied over, as fresh elements without the page's scripts or styles.
-// `glass`: Liquid Glass is on, so the toolbar is a floating glass capsule
-// (Rust passes `true` in place of the `false` at the bottom).
-((glass) => {
+(() => {
   const HOST_ID = '__rust_browser_reader__';
   const open = document.getElementById(HOST_ID);
   if (open) {
@@ -124,20 +122,6 @@
     .body pre { overflow-x: auto; padding: 12px; background: var(--rule); border-radius: 6px; }
     .body table { border-collapse: collapse; } .body td, .body th { border: 1px solid var(--rule); padding: 4px 8px; }
     .body hr { border: 0; border-top: 1px solid var(--rule); }
-    /* Liquid Glass: the toolbar floats over the article as a glass capsule
-       that frosts the text scrolling under it and lights its edges. */
-    .page.glass .bar { top: 12px; width: fit-content; max-width: calc(100% - 32px); margin: 12px auto 0;
-      padding: 6px 6px 6px 18px; border: 0; border-radius: 22px;
-      background: color-mix(in srgb, var(--bg) 45%, transparent); backdrop-filter: blur(5px) saturate(1.8);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.75), inset 0 -1px 0 rgba(255,255,255,.25),
-        inset 0 3px 10px -5px rgba(255,255,255,.5), 0 0 0 .5px rgba(0,0,0,.12), 0 8px 24px rgba(0,0,0,.14); }
-    .page.glass.dark .bar { box-shadow: inset 0 1px 0 rgba(255,255,255,.16), inset 0 -1px 0 rgba(255,255,255,.05),
-        inset 0 3px 10px -5px rgba(255,255,255,.12), 0 0 0 .5px rgba(255,255,255,.1), 0 8px 24px rgba(0,0,0,.45); }
-    .page.glass .bar .site { flex: 0 1 auto; margin-right: 8px; }
-    .page.glass .bar button { border-color: transparent; border-radius: 15px; background: color-mix(in srgb, var(--fg) 7%, transparent); }
-    .page.glass .bar button:hover { background: color-mix(in srgb, var(--fg) 13%, transparent); }
-    .page.glass .bar .sep { background: color-mix(in srgb, var(--fg) 15%, transparent); }
-    .page.glass article { padding-top: 28px; }
   `;
   try {
     const sheet = new CSSStyleSheet();
@@ -151,7 +135,7 @@
 
   const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const page = document.createElement('div');
-  page.className = 'page ' + (dark ? 'dark' : 'light') + (glass ? ' glass' : '');
+  page.className = 'page ' + (dark ? 'dark' : 'light');
   let size = 19;
   page.style.setProperty('--size', size + 'px');
 
@@ -172,7 +156,7 @@
   const resize = (step) => { size = Math.max(14, Math.min(30, size + step)); page.style.setProperty('--size', size + 'px'); };
   const themes = {};
   const setTheme = (name) => {
-    page.className = 'page ' + name + (glass ? ' glass' : '');
+    page.className = 'page ' + name;
     for (const [key, b] of Object.entries(themes)) b.classList.toggle('on', key === name);
   };
   themes.light = button('Light', 'Light background', () => setTheme('light'));
@@ -212,4 +196,4 @@
   page.tabIndex = -1;
   page.focus();
   return 'opened';
-})(/* glass */ false);
+})();

@@ -86,7 +86,6 @@ Source: "{#SourceExe}"; DestDir: "{app}"; Flags: ignoreversion; Check: not IsArm
 Source: "{#SourceExe}"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
-Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; DestName: "THIRD-PARTY-NOTICES.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"

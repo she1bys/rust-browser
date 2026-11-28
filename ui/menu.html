@@ -382,68 +382,7 @@
   .ts-site { margin-top: 2px; color: var(--muted); font-size: 11.5px; }
   .ts-tag { flex: none; padding: 2px 6px; border-radius: 5px; background: var(--pill); color: var(--muted); font-size: 10.5px; }
   .ts-empty { padding: 18px 12px; color: var(--muted); text-align: center; }
-
-  /* ---- Liquid Glass (see glass.css) ----------------------------------------
-     The menu is its own window with nothing of the page behind it to bend, so
-     it takes glass's light instead: a frosted face over the same backdrop as
-     the toolbar, a lit top rim and a soft inner glow. Sizes don't change
-     (src/menu.rs measures them). */
-  html.liquid body {
-    background-color: var(--lg-base);
-    background-image: linear-gradient(var(--lg-menu-face), var(--lg-menu-face)), var(--lg-wallpaper);
-  }
-  html.liquid { --lg-menu-face: rgb(255 255 255 / 0.82); }
-  @media (prefers-color-scheme: dark) {
-    html.liquid { --lg-menu-face: rgb(26 28 34 / 0.80); }
-  }
-  html.liquid #menu,
-  html.liquid #card,
-  html.liquid #ts,
-  html.liquid #mem {
-    border-color: rgb(255 255 255 / 0.55);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9), inset 0 0 18px rgb(255 255 255 / 0.35);
-  }
-  @media (prefers-color-scheme: dark) {
-    html.liquid #menu,
-    html.liquid #card,
-    html.liquid #ts,
-    html.liquid #mem {
-      border-color: rgb(255 255 255 / 0.12);
-      box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.16), inset 0 0 18px rgb(255 255 255 / 0.04);
-    }
-  }
-  html.liquid #card,
-  html.liquid #mem,
-  html.liquid #ts { background-color: transparent; }
-  /* Windows 11: the window itself is frosted glass over the page behind it
-     (Windows' own acrylic, see enable_system_backdrop in src/menu.rs), so the
-     face only tints it. */
-  html.liquid.native-glass { background: transparent; }
-  html.liquid.native-glass body { background-image: none; background-color: var(--lg-native-face); }
-  html.liquid { --lg-native-face: rgb(255 255 255 / 0.52); }
-  @media (prefers-color-scheme: dark) {
-    html.liquid { --lg-native-face: rgb(30 32 38 / 0.55); }
-  }
-
-  /* Controls inside: translucent capsules, like on the other glass. */
-  html.liquid { --pill: var(--lg-line); }
-  html.liquid .sep,
-  html.liquid .mem-foot,
-  html.liquid .ts-head { border-color: var(--lg-line); }
-  html.liquid .sep { background: var(--lg-line); opacity: 1; }
-  html.liquid .zoom-group { border-radius: 14px; background: var(--lg-control); box-shadow: var(--lg-control-rim); }
-  html.liquid .z-btn { border-radius: 11px; }
-  html.liquid .ts-box { border-radius: 18px; background: var(--lg-control); box-shadow: var(--lg-control-rim); }
-  html.liquid .ts-row,
-  html.liquid .mem-row,
-  html.liquid .mem-sleep { border-radius: 10px; }
-  html.liquid #mem-free { border-radius: 16px; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35), 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent); }
-  html.liquid .mem-meter { background: var(--lg-control); }
-  html.liquid .item { border-radius: 9px; }
-  html.liquid .item:hover:not(:disabled),
-  html.liquid .item:focus-visible:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 </style>
-<!--liquid-glass-->
 </head>
 <body>
   <div id="menu" role="menu"></div>

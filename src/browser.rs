@@ -45,7 +45,7 @@ use crate::settings::{
 use crate::updater::{self, Release};
 use crate::webview_hooks::PopupGestures;
 use crate::window_state::{self, WindowState};
-use crate::{glass, shortcut_hook, url_input, webview_hooks};
+use crate::{shortcut_hook, url_input, webview_hooks};
 use std::sync::{Arc, RwLock};
 
 /// Height of the browser UI in logical pixels. Must match `ui/index.html` (38 + 50 = 88).
@@ -541,7 +541,7 @@ impl Browser {
         let chrome_height = chrome_height_for(&settings);
         let refresh_hz = display::monitor_refresh_hz(window.hwnd());
         let chrome = WebViewBuilder::new_with_web_context(&mut web_context)
-            .with_html(glass::page(UI_HTML, settings.liquid_glass))
+            .with_html(UI_HTML)
             .with_bounds(chrome_bounds(&window, false, chrome_height))
             // The theme is shared by every web view of the profile: it sets
             // the UI's colours and what pages see as the preferred scheme.
@@ -565,7 +565,7 @@ impl Browser {
             eprintln!("watch browser UI for crashes: {e}");
         }
 
-        let mut menu = PopupMenu::new(
+        let menu = PopupMenu::new(
             target,
             &window,
             chrome.environment(),
@@ -573,7 +573,6 @@ impl Browser {
             webview_theme(settings.theme),
             proxy.clone(),
         )?;
-        menu.set_glass(settings.liquid_glass && !lite);
 
         Ok(Self {
             download_hook: DownloadHook::new(downloads.next_id(), proxy.clone(), settings.download_dir.clone()),
@@ -639,11 +638,6 @@ impl Browser {
             window_state,
             saved_window_state: saved_window,
         })
-    }
-
-    /// Liquid Glass is on: chosen in Settings, and efficiency mode is off.
-    fn glass_active(&self) -> bool {
-        self.settings.liquid_glass && !self.efficiency_active()
     }
 
     /// Efficiency mode is on: chosen in Settings, or "Auto" on a low-end PC.
@@ -1030,10 +1024,7 @@ impl Browser {
             UserEvent::UiProcessFailed(failure) => match failure {
                 // Reload the UI; when it's back it asks for the state again.
                 ProcessFailure::PageCrashed | ProcessFailure::PageUnresponsive => {
-                    log_err(
-                        self.chrome.load_html(&glass::page(UI_HTML, self.settings.liquid_glass)),
-                        "reload browser UI",
-                    );
+                    log_err(self.chrome.load_html(UI_HTML), "reload browser UI");
                 }
                 ProcessFailure::EngineExited => self.restart_after_engine_crash(),
                 ProcessFailure::Other => {}
@@ -2215,9 +2206,8 @@ impl Browser {
         }
         let Some(webview) = &tab.webview else { return };
         let proxy = self.proxy.clone();
-        let script = reader_script(self.glass_active());
         log_err(
-            webview.evaluate_script_with_callback(&script, move |result| {
+            webview.evaluate_script_with_callback(READER_JS, move |result| {
                 // The script's return value, as JSON ("\"opened\"").
                 let result = serde_json::from_str::<String>(&result).unwrap_or_default();
                 let _ = proxy.send_event(UserEvent::ReaderResult { id, result });
@@ -2660,10 +2650,8 @@ impl Browser {
         }
         if self.settings.search_engine != before.search_engine
             || self.settings.efficiency_mode != before.efficiency_mode
-            || self.settings.liquid_glass != before.liquid_glass
         {
             self.sync_newtab_state();
-            self.menu.set_glass(self.glass_active());
         }
         self.sync();
     }
@@ -3922,15 +3910,6 @@ fn site_label(url: &str) -> String {
     }
 }
 
-/// Reader mode's script, with its toolbar as glass when Liquid Glass is on.
-fn reader_script(glass: bool) -> String {
-    if glass {
-        READER_JS.replacen("})(/* glass */ false);", "})(true);", 1)
-    } else {
-        READER_JS.to_string()
-    }
-}
-
 /// A page whose HTML source can be shown: a web page or a local file (not
 /// the browser's own pages, and not a source view already).
 fn can_view_source(url: &str) -> bool {
@@ -4170,13 +4149,6 @@ mod tests {
         assert_eq!(site_label("file:///C:/notes.html"), "Local file");
         assert_eq!(site_label("view-source:https://example.com/a"), "example.com");
         assert_eq!(site_label("about:blank"), "about:blank");
-    }
-
-    #[test]
-    fn reader_mode_gets_its_glass_switch() {
-        assert!(READER_JS.trim_end().ends_with("})(/* glass */ false);"));
-        assert!(reader_script(true).trim_end().ends_with("})(true);"));
-        assert_eq!(reader_script(false), READER_JS);
     }
 
     #[test]

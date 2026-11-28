@@ -69,7 +69,6 @@ Rust Browser checks for a new version once a day (you can turn this off, or chec
   - Clear browsing data (cookies, cache, site data, saved passwords), clear history, and reset all settings
 - Updates: a daily check for new versions (Settings > About: on/off and "Check for updates"), and a one-click Update button that downloads, verifies and installs the new version, then reopens your tabs
 - Closing the last tab closes the browser, like Chrome (with a confirmation prompt if downloads are active)
-- Liquid Glass (Settings > Appearance, on by default): Apple-style glass for the tab strip, the toolbar, the Settings, Bookmarks, History and Downloads panels, menus, reader mode and the New Tab page. The controls float as glass capsules that bend the backdrop through a squircle bevel (with a hint of colour split at the rim), frost it, and light their edges; lists and articles scroll under a glass header; shortcuts on the New Tab page grow and light up when pressed. On Windows 11 (22H2 and later) menus are real glass over the page behind them, frosted by Windows itself. The optics are a port of [liquid-rust](https://github.com/al1h3n/liquid-rust) to the web engine's own compositor, so it adds no libraries and costs nothing while the screen holds still. Efficiency mode turns it off
 - Smooth animations throughout (tabs opening and closing, panels, buttons, progress); turned off automatically if Windows is set to reduce motion
 - Downloads tab (`Ctrl+J` or toolbar button): opens in its own tab (`about:downloads`) with live progress, cancel, open file, show in folder, open download folder, remove entries, and clear list; toolbar button animates with a progress ring and count badge when downloads are added or running. A download keeps running if you close its source tab
 - Native Back, Forward (with disabled state), Reload / Stop
@@ -238,7 +237,6 @@ src/updater.rs         update check (GitHub releases), installer download + SHA-
 src/adblock.rs         the ad and tracker blocklist and matching
 src/import.rs          bookmarks and history from Chrome, Edge and Brave (Windows' built-in SQLite)
 src/device.rs          installed memory and processors, for efficiency mode
-ui/glass.js, glass.css Liquid Glass for the browser's own pages (see src/glass.rs)
 ui/reader.js           reader mode, run inside the page
 ui/newtab.html         the New Tab page
 tests/ui-smoke.ps1     automated click-through test of the real app (see Testing)
@@ -256,4 +254,4 @@ shortcut key presses all come from WebView2 itself.
 
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 Rust Browser contributors. Third-party notices: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[MIT](LICENSE). Copyright (c) 2026 Rust Browser contributors.

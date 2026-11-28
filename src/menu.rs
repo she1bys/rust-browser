@@ -222,10 +222,6 @@ pub struct PopupMenu {
     closed_at: Instant,
     /// The tab whose hover card is showing.
     card: Option<TabId>,
-    /// Liquid Glass (see `set_glass`).
-    glass: bool,
-    /// Windows frosts what is behind this window (see `enable_system_backdrop`).
-    native_glass: bool,
 }
 
 impl PopupMenu {
@@ -246,12 +242,9 @@ impl PopupMenu {
             .with_skip_taskbar(true)
             .with_owner_window(owner.hwnd())
             .with_theme(window_theme)
-            // See-through, so Windows 11 can frost the page behind it (below).
-            .with_transparent(true)
             .with_inner_size(LogicalSize::new(MAIN_WIDTH, 360.0))
             .build(target)
             .map_err(|_| wry::Error::InitScriptError)?;
-        let native_glass = enable_system_backdrop(&window);
 
         Ok(Self {
             webview: None,
@@ -266,8 +259,6 @@ impl PopupMenu {
             kind: None,
             closed_at: Instant::now() - Duration::from_secs(10),
             card: None,
-            glass: false,
-            native_glass,
         })
     }
 
@@ -280,19 +271,9 @@ impl PopupMenu {
         let proxy = self.proxy.clone();
         let focus_proxy = self.proxy.clone();
         let ready_proxy = self.proxy.clone();
-        let mut html = crate::glass::page(MENU_HTML, self.glass);
-        if self.native_glass {
-            // The page lets the frosted backdrop through (see `native-glass` in menu.html).
-            html = html.replacen(
-                "</head>",
-                "<script>document.documentElement.classList.add('native-glass')</script></head>",
-                1,
-            );
-        }
         let built = WebViewBuilder::new()
             .with_environment(self.environment.clone())
-            .with_transparent(self.native_glass)
-            .with_html(html)
+            .with_html(MENU_HTML)
             .with_theme(self.webview_theme)
             .with_ipc_handler(move |request| {
                 if let Ok(msg) = serde_json::from_str::<UiMsg>(request.body()) {
@@ -494,18 +475,6 @@ impl PopupMenu {
         self.webview_theme = webview_theme;
     }
 
-    /// Liquid Glass on or off (off in efficiency mode too).
-    pub fn set_glass(&mut self, on: bool) {
-        if self.glass == on {
-            return;
-        }
-        self.glass = on;
-        if let Some(webview) = &self.webview {
-            let script = format!("document.documentElement.classList.toggle('lg', {on})");
-            let _ = webview.evaluate_script(&script);
-        }
-    }
-
     /// A menu replaces any hover card in the same window.
     fn drop_card_for_menu(&mut self) {
         if self.card.take().is_some() {
@@ -627,38 +596,6 @@ impl PopupMenu {
             }
         }
     }
-}
-
-/// Asks Windows to frost what is behind the menu window: the acrylic
-/// "transient window" backdrop Windows 11 (22H2 and later) uses for its own
-/// menus and flyouts, with rounded corners. Older Windows refuses it, and then
-/// the menu keeps its own opaque face. Returns whether the backdrop is on.
-fn enable_system_backdrop(window: &Window) -> bool {
-    use windows_sys::Win32::{
-        Graphics::Dwm::{
-            DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
-            DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
-        },
-        UI::Controls::MARGINS,
-    };
-    let hwnd = window.hwnd() as HWND;
-    let backdrop = DWMSBT_TRANSIENTWINDOW;
-    let corners = DWMWCP_ROUND;
-    let size = std::mem::size_of::<i32>() as u32;
-    // SAFETY: a live window handle, and pointers to locals of the size given.
-    unsafe {
-        if DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE as u32, (&raw const backdrop).cast(), size) < 0 {
-            return false;
-        }
-        // The backdrop shows through the client area only where the frame
-        // is extended over it.
-        let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
-        if DwmExtendFrameIntoClientArea(hwnd, &margins) < 0 {
-            return false;
-        }
-        let _ = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE as u32, (&raw const corners).cast(), size);
-    }
-    true
 }
 
 /// Computes the exact logical height of `entries` matching `ui/menu.html` CSS.

@@ -44,8 +44,6 @@ pub struct NewTabState {
     pub recent: Vec<NewTabLink>,
     /// Efficiency mode: a plain page without shadows, glows or motion.
     pub lite: bool,
-    /// Liquid Glass (never together with `lite`).
-    pub glass: bool,
 }
 
 #[derive(Serialize)]
@@ -53,7 +51,6 @@ pub struct NewTabState {
 struct NewTabPayload<'a> {
     private: bool,
     lite: bool,
-    glass: bool,
     engine_name: &'a str,
     search_prefix: &'a str,
     quick: &'a [NewTabLink],
@@ -122,7 +119,6 @@ impl NewTabState {
             quick,
             recent,
             lite,
-            glass: settings.liquid_glass && !lite,
         }
     }
 }
@@ -161,7 +157,7 @@ pub fn normalize_url(url: &str) -> String {
 /// Renders the complete New Tab HTML document with safely escaped inline bootstrap JSON.
 pub fn render_html(state: &NewTabState, private: bool) -> String {
     let payload_json = serialized_payload(state, private);
-    let html = if let Some((before, after)) = HTML.split_once(DATA_MARKER) {
+    if let Some((before, after)) = HTML.split_once(DATA_MARKER) {
         let mut out = String::with_capacity(before.len() + payload_json.len() + after.len());
         out.push_str(before);
         out.push_str(&payload_json);
@@ -169,8 +165,7 @@ pub fn render_html(state: &NewTabState, private: bool) -> String {
         out
     } else {
         HTML.to_string()
-    };
-    crate::glass::page(&html, state.glass)
+    }
 }
 
 /// Builds a JS snippet to live-refresh an already-open normal New Tab page.
@@ -216,7 +211,6 @@ fn serialized_payload(state: &NewTabState, private: bool) -> String {
         NewTabPayload {
             private: true,
             lite: state.lite,
-            glass: state.glass,
             engine_name: &state.engine_name,
             search_prefix: &state.search_prefix,
             quick: &[],
@@ -226,7 +220,6 @@ fn serialized_payload(state: &NewTabState, private: bool) -> String {
         NewTabPayload {
             private: false,
             lite: state.lite,
-            glass: state.glass,
             engine_name: &state.engine_name,
             search_prefix: &state.search_prefix,
             quick: &state.quick,
@@ -356,7 +349,6 @@ mod tests {
             }],
             recent: vec![],
             lite: false,
-            glass: true,
         };
 
         let normal = render_html(&state, false);
@@ -366,10 +358,6 @@ mod tests {
         let private = render_html(&state, true);
         assert!(!private.contains("example.com"));
         assert!(private.contains("\"private\":true"));
-
-        // Liquid Glass is built in, and switched on only when asked for.
-        assert!(normal.contains("window.liquidGlass") && normal.contains("classList.add('lg')"));
-        assert!(!render_html(&NewTabState { glass: false, ..state }, false).contains("classList.add('lg')"));
     }
 
     #[test]
@@ -380,7 +368,6 @@ mod tests {
             quick: vec![NewTabLink { url: "https://example.com/".into(), title: "Example".into(), bookmarked: false }],
             recent: vec![],
             lite: false,
-            glass: false,
         });
 
         let ok = handle_request(&state, Request::get("rbnewtab://localhost/").body(Vec::new()).unwrap());

@@ -353,33 +353,12 @@
     .recent-list { grid-template-columns: minmax(0, 1fr); }
     .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
-
-  /* ---- Liquid Glass (see glass.js and glass.css) --------------------------
-     The page is the backdrop; the search box, shortcuts and lists are glass. */
-  html.liquid body.private {
-    background-image:
-      radial-gradient(55% 70% at 4% 0%, rgb(124 58 237 / 0.42), transparent 70%),
-      radial-gradient(45% 60% at 96% 4%, rgb(168 85 247 / 0.32), transparent 70%),
-      radial-gradient(65% 60% at 40% 100%, rgb(79 70 229 / 0.32), transparent 72%);
-  }
-  html.liquid .engine-pill { color: var(--text); }
-  html.liquid .search-box:focus-within { --lg-ring: 0 0 0 3px var(--accent-ring); }
-  html.liquid .tile { border-radius: 22px; }
-  html.liquid .tile:hover { --lg-face: rgb(255 255 255 / 0.12); }
-  html.liquid .recent-list,
-  html.liquid .info-card { border-radius: 24px; }
-  html.liquid .recent-row:hover { background: var(--hover); }
-  html.liquid .kbd-hint,
-  html.liquid .chip { border-color: transparent; background: var(--hover); }
-  html.liquid #clock-time,
-  html.liquid #clock-meta { text-shadow: var(--lg-text-shadow); }
 </style>
-<!--liquid-glass-->
 </head>
 <body>
   <main class="shell">
     <header class="topbar">
-      <div class="engine-pill" data-glass><span class="dot"></span><span id="mode-label">Search</span></div>
+      <div class="engine-pill"><span class="dot"></span><span id="mode-label">Search</span></div>
     </header>
 
     <section class="hero" aria-label="Search">
@@ -389,7 +368,7 @@
       <div id="clock-meta"></div>
 
       <form class="search-form" id="search-form" autocomplete="off">
-        <div class="search-box" data-glass>
+        <div class="search-box">
           <span class="search-icon" aria-hidden="true">
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <circle cx="11" cy="11" r="7"></circle>
@@ -412,7 +391,7 @@
       </form>
     </section>
 
-    <section class="info-card" id="private-card" data-glass hidden>
+    <section class="info-card" id="private-card" hidden>
       <p>Pages you open in private tabs aren't saved to your history, and their cookies and site data are deleted when you close the last private tab.</p>
       <div class="chips">
         <span class="chip">No history saved</span>
@@ -429,7 +408,7 @@
       <div class="tiles" id="tiles"></div>
     </section>
 
-    <section class="info-card" id="empty-section" data-glass hidden>
+    <section class="info-card" id="empty-section" hidden>
       <p>Your bookmarks and most visited sites will show up here. Coming from another browser? Import your bookmarks and history from the menu (⋮ › Import from Chrome or Edge).</p>
       <div class="chips">
         <span class="chip shortcut-chip"><kbd>Ctrl</kbd><kbd>L</kbd> Address bar</span>
@@ -443,7 +422,7 @@
       <div class="section-head">
         <h2 class="section-title">Continue browsing</h2>
       </div>
-      <div class="recent-list" id="recent-list" data-glass></div>
+      <div class="recent-list" id="recent-list"></div>
     </section>
   </main>
 
@@ -537,7 +516,6 @@
       const isPrivate = !!data.private;
       document.body.classList.toggle('private', isPrivate);
       document.body.classList.toggle('lite', !!data.lite);
-      document.documentElement.classList.toggle('lg', !!data.glass && !data.lite);
       document.title = isPrivate ? 'Private Tab' : 'New Tab';
       $('brand-mark').innerHTML = isPrivate ? SHIELD_SVG : LOGO_IMG;
       $('brand-title').textContent = isPrivate ? 'Private tab' : 'Rust Browser';
@@ -571,8 +549,6 @@
           const host = hostOf(item.url);
           const a = document.createElement('a');
           a.className = 'tile';
-          a.dataset.glass = '';
-          a.dataset.glassPress = '';
           a.href = item.url;
           a.title = (item.title || host) + '\n' + host;
 
